@@ -1,0 +1,321 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function admin() {
+      return signedIn() && request.auth.token.get('admin', false) == true;
+    }
+    function owned(ownerId) {
+      return signedIn() && request.auth.uid == ownerId;
+    }
+    function noLegacyArea(data) {
+      return !data.keys().hasAny(['areaId','areadId','area'])
+        && (!('proposedData' in data) || !data.proposedData.keys().hasAny(['areaId','areadId','area']));
+    }
+    function text(value, maxLength) {
+      return value is string && value.size() > 0
+        && value.size() <= maxLength && value.matches('(?s).*\\S.*');
+    }
+    function documentId(value) {
+      return text(value, 128) && value.matches('[A-Za-z0-9_-]+');
+    }
+    function location(data) {
+      return !('location' in data) || (data.location is map
+        && data.location.keys().hasAll(['latitude', 'longitude'])
+        && data.location.keys().hasOnly(['latitude', 'longitude'])
+        && data.location.latitude is number
+        && data.location.longitude is number
+        && data.location.latitude >= -90 && data.location.latitude <= 90
+        && data.location.longitude >= -180 && data.location.longitude <= 180);
+    }
+    // Compact day strings allow one bounded regex to validate all minute tokens.
+    // Numeric comparisons then enforce ordering, duration, and weekly boundaries.
+    function validDay(day,next) {
+      let parts=day.split(',');
+      let start=int(parts[1]); let end=int(parts[2]);
+      let secondStart=int(parts[3]); let secondEnd=int(parts[4]);
+      let lastEnd=secondEnd>0 ? secondEnd : end;
+      let following=next.split(',');
+      return day is string && day.matches('([0-3],0,0,0,0|4,(0|[1-9][0-9]{0,2}|1[0-3][0-9]{2}|14[0-3][0-9]),(0|[1-9][0-9]{0,2}|1[0-9]{3}|2[0-7][0-9]{2}|28[0-7][0-9]),(0|[1-9][0-9]{0,2}|1[0-3][0-9]{2}|14[0-3][0-9]),(0|[1-9][0-9]{0,2}|1[0-9]{3}|2[0-7][0-9]{2}|28[0-7][0-9]))')
+        && (parts[0]!='4' || (end>start && end<=start+1440
+          && ((secondStart==0 && secondEnd==0) || (secondStart>=end && secondEnd>secondStart && secondEnd<=secondStart+1440))
+          && (lastEnd<=1440 || (following[0]!='3' && (following[0]!='4' || int(following[1])>=lastEnd-1440)))));
+    }
+    function validWeekShape(week) {
+      return week is map && week.keys().hasOnly(['sat','sun','mon','tue','wed','thu','fri']) && week.size()==7;
+    }
+    // Four immutable validation receipts keep each write under the evaluation
+    // budget. The parent requires all four in the same atomic submission.
+    function scheduleReceipts(requestId) {
+      return getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/scheduleValidation/0).data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/scheduleValidation/1).data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/scheduleValidation/2).data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/scheduleValidation/3).data.createdAt == request.time;
+    }
+    function availability(data) {
+      return (!('serviceMode' in data) || data.serviceMode in ['fixed','mobile','both'])
+        && (!('coverageAreas' in data) || (data.coverageAreas is list && data.coverageAreas.size() <= 5
+          && data.coverageAreas.toSet().size() == data.coverageAreas.size()
+          && data.coverageAreas.hasOnly(['all','وسط البلد','داير الناحية','مدخل طريق طوخ','غرب السكة','محطة القطار'])
+          && (!data.coverageAreas.hasAny(['all']) || data.coverageAreas.size() == 1)))
+        && (!(data.get('serviceMode','fixed') in ['mobile','both']) || data.get('coverageAreas',[]).size() > 0)
+;
+    }
+    function publicAddress(data) {
+      return data.get('serviceMode','fixed') == 'mobile'
+        ? (data.address is string && data.address.size() <= 500) : text(data.address,500);
+    }
+    function serviceValues(data) {
+      return data is map
+        && data.keys().hasAll(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'address'])
+        && data.keys().hasOnly(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'whatsapp', 'address', 'location', 'serviceMode','coverageAreas','weeklyHours'])
+        && text(data.displayName, 100)
+        && text(data.serviceTitle, 160)
+        && data.description is string && data.description.size() <= 2000
+        && data.phone is string && data.phone.matches('01[0125][0-9]{8}')
+        && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.matches('01[0125][0-9]{8}')))
+        && publicAddress(data) && availability(data)
+        && location(data);
+    }
+    function validProfile(data) {
+      return data.keys().hasAll(['displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['displayName', 'createdAt', 'updatedAt'])
+        && text(data.displayName, 100)
+        && data.createdAt is timestamp && data.updatedAt == request.time;
+    }
+    function validRequest(data, requestId) {
+      let slotPath = /databases/$(database)/documents/requestSlots/$(data.providerId);
+      let slot = getAfter(slotPath).data;
+      return data.keys().hasAll(['ownerId', 'providerId', 'type', 'status', 'proposedData', 'createdAt', 'updatedAt', 'consent', 'consentedAt'])
+        && data.keys().hasOnly(['ownerId', 'providerId', 'type', 'status', 'proposedData', 'createdAt', 'updatedAt', 'consent', 'consentedAt'])
+        && owned(data.ownerId) && documentId(data.providerId)
+        && data.type in ['create', 'update', 'restore'] && data.status == 'pending'
+        && data.consent == true && data.consentedAt == request.time
+        && data.createdAt == request.time && data.updatedAt == request.time
+        && ('serviceMode' in data.proposedData) && serviceValues(data.proposedData)
+        && (!('weeklyHours' in data.proposedData) || scheduleReceipts(requestId))
+        && slot.ownerId == request.auth.uid
+        && slot.providerId == data.providerId
+        && slot.requestId == requestId
+        && slot.updatedAt == request.time
+        && (!exists(slotPath) || get(slotPath).data.requestId != requestId);
+    }
+    function validRequestTarget(data) {
+      let providerPath = /databases/$(database)/documents/providers/$(data.providerId);
+      let slotPath = /databases/$(database)/documents/requestSlots/$(data.providerId);
+      let archivePath = /databases/$(database)/documents/archivedProviders/$(data.providerId);
+      return (data.type == 'update' && exists(providerPath)
+          && get(providerPath).data.ownerId == request.auth.uid)
+        || (data.type == 'restore' && !exists(providerPath) && exists(archivePath)
+          && get(archivePath).data.ownerId == request.auth.uid
+          && get(archivePath).data.archiveStatus == 'unpublished')
+        || (data.type == 'create' && !exists(providerPath)
+          && (!exists(archivePath) || get(archivePath).data.archiveStatus != 'unpublished')
+          && (!exists(slotPath)
+            || (get(slotPath).data.ownerId == request.auth.uid
+              && get(/databases/$(database)/documents/serviceRequests/$(get(slotPath).data.requestId)).data.type == 'create'
+              && get(/databases/$(database)/documents/serviceRequests/$(get(slotPath).data.requestId)).data.status == 'rejected')));
+    }
+    function validSlot(data, providerId) {
+      let requestPath = /databases/$(database)/documents/serviceRequests/$(data.requestId);
+      let next = getAfter(requestPath).data;
+      return data.keys().hasAll(['ownerId', 'providerId', 'requestId', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'providerId', 'requestId', 'updatedAt','weeklyHours'])
+        && owned(data.ownerId) && data.providerId == providerId
+        && documentId(data.requestId) && data.updatedAt == request.time
+        && !exists(requestPath)
+        && next.ownerId == request.auth.uid
+        && next.providerId == providerId
+        && next.status == 'pending'
+        && documentId(next.proposedData.categoryId)
+        && exists(/databases/$(database)/documents/categories/$(next.proposedData.categoryId))
+        && get(/databases/$(database)/documents/categories/$(next.proposedData.categoryId)).data.active == true
+        && data.get('weeklyHours',null) == next.proposedData.get('weeklyHours',null);
+    }
+
+    function quotaReservation(uid, data, previous, limit) {
+      let ids = data.serviceIds;
+      let added = ids.removeAll(previous);
+      let slot = getAfter(/databases/$(database)/documents/requestSlots/$(added[0]));
+      let proposal = getAfter(/databases/$(database)/documents/serviceRequests/$(slot.data.requestId));
+      return data.keys().hasAll(['serviceIds', 'updatedAt'])
+        && data.keys().hasOnly(['serviceIds', 'updatedAt', 'limit'])
+        && ids is list && ids.size() <= limit && limit is int && limit >= 0 && limit <= 100
+        && ids.toSet().size() == ids.size()
+        && ids.hasAll(previous) && ids.size() == previous.size() + 1
+        && added.size() == 1 && documentId(added[0])
+        && slot.data.ownerId == uid && slot.data.providerId == added[0]
+        && slot.data.updatedAt == request.time
+        && proposal.data.ownerId == uid && proposal.data.providerId == added[0]
+        && proposal.data.type in ['create', 'restore'] && proposal.data.status == 'pending'
+        && proposal.data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+    match /serviceQuotas/{uid} {
+      allow read: if owned(uid) || admin();
+      allow create: if admin() || (owned(uid)
+        && !('limit' in request.resource.data)
+        && quotaReservation(uid, request.resource.data, [], 3));
+      allow update: if admin() || (owned(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['serviceIds', 'updatedAt'])
+        && quotaReservation(uid, request.resource.data, resource.data.serviceIds, resource.data.get('limit', 3)));
+      allow delete: if admin();
+    }
+    match /users/{uid} {
+      allow read: if owned(uid) || admin();
+      allow create: if owned(uid) && validProfile(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+      allow update: if owned(uid) && validProfile(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+    match /categories/{categoryId} {
+      allow read: if admin() || resource.data.active == true;
+      allow write: if admin();
+    }
+    match /providers/{providerId} {
+      allow read: if true;
+      allow create: if admin() && noLegacyArea(request.resource.data);
+      allow delete: if admin();
+      allow update: if noLegacyArea(request.resource.data) && (admin() || (owned(resource.data.ownerId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastConfirmedAt'])
+        && request.resource.data.lastConfirmedAt == request.time));
+    }
+    function archiveAvailabilityMatchesPublication(data, providerId) {
+      let published = get(/databases/$(database)/documents/providers/$(providerId)).data;
+      return data.get('weeklyHours',null) == published.get('weeklyHours',null)
+        && data.get('serviceMode',null) == published.get('serviceMode',null)
+        && data.get('coverageAreas',null) == published.get('coverageAreas',null);
+    }
+    function validArchive(data) {
+      return data.keys().hasAll(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'address', 'ownerId', 'publishedAt', 'archiveStatus', 'unpublishReason', 'unpublishedAt', 'unpublishedBy'])
+        && data.keys().hasOnly(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'whatsapp', 'address', 'location', 'ownerId', 'publishedAt', 'archiveStatus', 'unpublishReason', 'unpublishedAt', 'unpublishedBy', 'restoredAt', 'restoredBy','serviceMode','coverageAreas','weeklyHours'])
+        && documentId(data.ownerId) && documentId(data.categoryId)
+        && text(data.displayName, 100) && text(data.serviceTitle, 160)
+        && data.description is string && data.description.size() <= 2000
+        && data.phone is string && data.phone.matches('01[0125][0-9]{8}')
+        && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.matches('01[0125][0-9]{8}')))
+        && publicAddress(data) && availability(data) && location(data)
+        && data.publishedAt is timestamp && data.unpublishedAt is timestamp
+        && documentId(data.unpublishedBy) && text(data.unpublishReason, 1000)
+        && (data.archiveStatus == 'unpublished'
+          || (data.archiveStatus == 'restored' && data.restoredAt is timestamp && documentId(data.restoredBy)));
+    }
+    match /archivedProviders/{providerId} {
+      allow get: if admin() || (signedIn() && (!exists(/databases/$(database)/documents/archivedProviders/$(providerId)) || owned(resource.data.ownerId)));
+      allow list: if admin() || owned(resource.data.ownerId);
+      allow create: if admin() && validArchive(request.resource.data)
+        && request.resource.data.archiveStatus == 'unpublished'
+        && request.resource.data.unpublishedAt == request.time
+        && request.resource.data.unpublishedBy == request.auth.uid
+        && archiveAvailabilityMatchesPublication(request.resource.data,providerId)
+        && get(/databases/$(database)/documents/providers/$(providerId)).data.ownerId == request.resource.data.ownerId
+        && !existsAfter(/databases/$(database)/documents/providers/$(providerId));
+      allow update: if admin() && validArchive(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && ((request.resource.data.archiveStatus == 'unpublished'
+          && request.resource.data.unpublishedAt == request.time
+          && request.resource.data.unpublishedBy == request.auth.uid
+          && archiveAvailabilityMatchesPublication(request.resource.data,providerId)
+          && exists(/databases/$(database)/documents/providers/$(providerId))
+          && !existsAfter(/databases/$(database)/documents/providers/$(providerId)))
+        || (resource.data.archiveStatus == 'unpublished' && request.resource.data.archiveStatus == 'restored'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archiveStatus', 'restoredAt', 'restoredBy'])
+          && request.resource.data.restoredAt == request.time
+          && request.resource.data.restoredBy == request.auth.uid
+          && getAfter(/databases/$(database)/documents/providers/$(providerId)).data.ownerId == resource.data.ownerId));
+      allow delete: if admin();
+    }
+    match /serviceRequests/{requestId} {
+      allow get: if admin() || (signedIn()
+        && (!exists(/databases/$(database)/documents/serviceRequests/$(requestId))
+          || owned(resource.data.ownerId)));
+      allow list: if admin() || owned(resource.data.ownerId);
+      allow create: if noLegacyArea(request.resource.data) && (admin() || (validRequest(request.resource.data, requestId)
+        && validRequestTarget(request.resource.data)
+        && (request.resource.data.type == 'update'
+          || getAfter(/databases/$(database)/documents/serviceQuotas/$(request.auth.uid)).data.serviceIds.hasAny([request.resource.data.providerId]))));
+      allow update: if admin() && noLegacyArea(request.resource.data);
+      allow delete: if admin();
+    }
+    match /serviceRequests/{requestId}/scheduleValidation/{chunk} {
+      allow read: if admin() || owned(resource.data.ownerId);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['ownerId','createdAt'])
+        && owned(request.resource.data.ownerId) && request.resource.data.createdAt == request.time
+        && !exists(/databases/$(database)/documents/serviceRequests/$(requestId))
+        && validScheduleChunk(requestId,chunk);
+      allow update: if false;
+      allow delete: if admin();
+    }
+    function validScheduleChunk(requestId,chunk) {
+      let parent=getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)).data;
+      let week=parent.proposedData.weeklyHours;
+      return parent.ownerId == request.auth.uid && parent.status == 'pending' && validWeekShape(week)
+        && ((chunk=='0' && validDay(week.sat,week.sun) && validDay(week.sun,week.mon))
+          || (chunk=='1' && validDay(week.mon,week.tue) && validDay(week.tue,week.wed))
+          || (chunk=='2' && validDay(week.wed,week.thu) && validDay(week.thu,week.fri))
+          || (chunk=='3' && validDay(week.fri,week.sat)));
+    }
+    match /requestSlots/{providerId} {
+      allow get: if admin() || (signedIn()
+        && (!exists(/databases/$(database)/documents/requestSlots/$(providerId))
+          || owned(resource.data.ownerId)));
+      allow list: if admin() || owned(resource.data.ownerId);
+      allow create: if validSlot(request.resource.data, providerId);
+      allow update: if validSlot(request.resource.data, providerId)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.providerId == resource.data.providerId
+        && request.resource.data.requestId != resource.data.requestId
+        && get(/databases/$(database)/documents/serviceRequests/$(resource.data.requestId)).data.status in ['approved', 'rejected'];
+      // Unpublishing retains history; explicit permanent removal is admin-only.
+      allow delete: if admin();
+    }
+    match /reports/{reportId} {
+      allow read: if admin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['providerId', 'reason', 'reporterId', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['providerId', 'reason', 'reporterId', 'createdAt'])
+        && documentId(request.resource.data.providerId)
+        && request.resource.data.reporterId == request.auth.uid
+        && text(request.resource.data.reason, 1000)
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if admin();
+    }
+    function validSupport(data) {
+      return data.keys().hasAll(['ownerId','kind','message','status','createdAt','updatedAt'])
+        && data.keys().hasOnly(['ownerId','kind','message','status','createdAt','updatedAt','consent','consentedAt','staffNote','reviewedAt'])
+        && documentId(data.ownerId) && data.kind in ['support','deletion'] && text(data.message,2000)
+        && data.createdAt is timestamp && data.updatedAt == request.time
+        && (data.kind == 'support' ? data.status in ['received','in_review','resolved','rejected']
+          : data.status in ['received','in_review','awaiting_verification','ready_for_deletion','rejected'])
+        && (!('staffNote' in data) || (data.staffNote is string && data.staffNote.size() <= 2000))
+        && (!('reviewedAt' in data) || data.reviewedAt is timestamp)
+        && (data.kind != 'deletion' || (data.consent == true && data.consentedAt is timestamp));
+    }
+    function supportTransition(old, next) {
+      return (old.status == 'received' && next.status in ['in_review','rejected'])
+        || (old.status == 'in_review' && (old.kind == 'support' ? next.status in ['resolved','rejected'] : next.status in ['awaiting_verification','rejected']))
+        || (old.kind == 'deletion' && old.status == 'awaiting_verification' && next.status in ['ready_for_deletion','rejected']);
+    }
+    match /supportRequests/{requestId} {
+      allow get: if admin() || (signedIn() && (!exists(/databases/$(database)/documents/supportRequests/$(requestId)) || owned(resource.data.ownerId)));
+      allow list: if admin() || owned(resource.data.ownerId);
+      allow create: if signedIn() && validSupport(request.resource.data) && owned(request.resource.data.ownerId)
+        && request.resource.data.status == 'received' && request.resource.data.createdAt == request.time
+        && !('staffNote' in request.resource.data) && !('reviewedAt' in request.resource.data)
+        && (request.resource.data.kind == 'deletion' ? request.resource.data.consentedAt == request.time
+          : !('consent' in request.resource.data) && !('consentedAt' in request.resource.data));
+      allow update: if admin() && validSupport(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','staffNote','reviewedAt','updatedAt'])
+        && request.resource.data.reviewedAt == request.time && supportTransition(resource.data,request.resource.data)
+        && (request.resource.data.status != 'rejected' || text(request.resource.data.staffNote,2000));
+      allow delete: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,58 @@
+# Guest UX Phase 1 — targeted fixes and regression results
+
+7 November 2026. Implements only G01, G02, and G07 from [the guest audit](guest-ux-audit.md). No Phase 2 work.
+
+## Changes made / before and after
+
+| Issue | Before                                                                         | After                                                                                                                                                                                                                                                                                                                                                     | Application file                                    |
+| ----- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| G01   | Four narrow Home columns clipped and split Arabic labels at 360dp / 130% text. | Grid tiles use available width relative to font scale: the existing 22% four-column width remains at 411dp / 100%; 48% tiles create two columns at 360dp / 130%; very constrained scaled widths use one column. Text scaling, complete labels, natural heights, icons, RTL order, colors, and navigation remain intact. Row category cards are unchanged. | `src/features/discovery/components/DiscoveryUi.tsx` |
+| G02   | Opening either Home search result type explicitly cleared local query state.   | Removed that reset. Exact query/results survive normal stack Back, tabs, and resume. Existing clear action still clears. Results continue to derive from the current public providers/categories on render; no copied result cache, search-history persistence, ranking changes, or global state was added.                                               | `src/app/(tabs)/index.tsx`                          |
+| G07   | The description card rendered even when body text was absent.                  | A trimmed-description guard omits the whole card for null, undefined, empty, or whitespace-only text. With no description, the existing category pill appears in the identity card; with a description, its previous grouping remains. Name, service title, location, contacts, sticky action bar, and spacing styles remain.                             | `src/app/provider/[id].tsx`                         |
+
+Regression coverage added in `__tests__/guest-ux-fixes.test.tsx`; no dependencies added. Tests failed against the original behavior before the implementation. Twelve targeted cases now pass, including current-data updates while retaining a query and isolated absent/present/long Arabic description fixtures.
+
+## Automated verification
+
+| Check                                          | Result                                                                             |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Existing Jest suite plus new regressions       | **33 suites, 320 tests passed** (`node node_modules/jest/bin/jest.js --runInBand`) |
+| TypeScript                                     | Passed (`node node_modules/typescript/bin/tsc --noEmit`)                           |
+| ESLint                                         | Passed (`node node_modules/eslint/bin/eslint.js . --max-warnings=0`)               |
+| Formatting of changed source/test/report files | Checked with installed Prettier                                                    |
+
+The isolated tests mock remote reads and never create public records. They cover null/undefined/blank descriptions and a long legitimate Arabic paragraph, as the live provider used for the manual path had no description. Component tests verify scalable/untruncated labels and adaptive widths; actual Arabic glyph wrapping was checked separately in emulator screenshots.
+
+## Actual emulator regression testing
+
+Android 17/API 37, `emulator-5554`, development build `com.anonymous.manshaetelammar`, signed out. Baseline 1080 × 2424 pixels at density 420 (~411dp), font 1.0. Stress configuration density 480 (~360dp), font 1.3. Restarted after changing display configuration. Restored baseline density/font and original Dark appearance afterward. Network settings were not changed in this phase.
+
+| Case                                     | Observed outcome / evidence                                                                                                                                                                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 411dp / 100% Light                       | Four columns retained; all eight short/long category labels readable. [Screenshot](evidence/fix-28-baseline-light-grid.png)                                                                                                                                               |
+| 411dp / 100% Dark                        | Four-column baseline retained. [Screenshot](evidence/fix-31-baseline-dark-grid.png)                                                                                                                                                                                       |
+| 360dp / 130% Dark                        | Two columns; long carpentry and transport labels wrap at word boundaries, no category-label clipping observed. [Screenshot](evidence/fix-20-small-dark-grid-clean.png)                                                                                                    |
+| 360dp / 130% Light                       | Same readable two-column layout and RTL category order. [Screenshot](evidence/fix-23-small-light-grid.png)                                                                                                                                                                |
+| Home → search → Provider → hardware Back | Exact query `  سباك  ` retained with surrounding spaces and both result types. [Before opening](evidence/fix-02-search-spaces.json), [after Back](evidence/fix-04-hardware-back-query.json)                                                                               |
+| Home → search → Category → hardware Back | Exact query/results retained. [After Back](evidence/fix-06-category-back-query.json)                                                                                                                                                                                      |
+| Search → Explore tab → Home              | Query/results retained. [Evidence](evidence/fix-08-tab-return-query.json)                                                                                                                                                                                                 |
+| Background/resume                        | Sent app to background with Android Home; brought existing task foreground. Query/results retained. No process-death persistence claim. [Evidence](evidence/fix-09-resume-query.json)                                                                                     |
+| Explicit clear                           | Field returned to its placeholder and quick results disappeared. [Evidence](evidence/fix-10-cleared.json)                                                                                                                                                                 |
+| Change query / open another result       | Changed to `الفتح`; relevant provider and category appeared; provider opened again. Also exercised opening the other result type from the retained list. [Changed query](evidence/fix-11-changed-query.json), [reopened provider](evidence/fix-12-reopened-provider.json) |
+| Missing description, Dark                | “عن الخدمة” absent; category/name/title/address/contact content retained. [Screenshot](evidence/fix-03-provider-no-description.png)                                                                                                                                       |
+| Missing description, Light / large text  | No blank description card; category retained in identity; sticky contact actions visible above system navigation. [Screenshot](evidence/fix-25-small-light-provider.png)                                                                                                  |
+| Phone                                    | Populated Android dialer opened; returned without placing a call. [Evidence](evidence/fix-13-dialer.json)                                                                                                                                                                 |
+| WhatsApp                                 | Browser WhatsApp landing page opened with the provider number; no message sent. [Evidence](evidence/fix-26-whatsapp-handoff.json)                                                                                                                                         |
+
+Original before screenshots: [broken large-text grid](evidence/37-small-home-clean.png), [lost search context](evidence/13-search-back.json), [empty description card](evidence/29-light-provider.png). After screenshots above were visually inspected, not inferred solely from hierarchy text.
+
+## Limits and out-of-scope observations
+
+- No physical device, iOS, release build, edge-gesture navigation, TalkBack, or full phone-keyboard regression claim. The emulator's floating hardware-keyboard toolbar remained a limitation.
+- Normal background/resume was tested; process death/relaunch need not preserve this deliberately local, session-only query. No global persistence was introduced.
+- A second distinct real provider search result was not used in the preservation sequence; provider-to-category comparison and reopening the provider were exercised. Current-data changes were verified in an isolated component test rather than altering production data.
+- Present/long/whitespace-only descriptions were tested with isolated fixtures, not injected into public data or preview routes. Full long-description device layout remains unverified.
+- One-column behavior at extreme text scale is covered by a component test; manual visual coverage is the required 100%/130% configurations.
+- Development LogBox overlays appeared after restarts and were dismissed for final category screenshots. Preliminary `fix-15`/`fix-16`/`fix-17` captures include an early contact transition or startup and are not used as passing evidence; `fix-26` is the confirmed WhatsApp handoff.
+- Existing dense headings and other large-text presentation outside category labels remain outside this fix scope. No claim is made that these three fixes constitute a complete accessibility pass.
+- G03, G04, G05, G06, G08, G09, and G10 remain untouched, including repeated copy feedback, hero copy, result ranking/presentation, badges, and disclaimer text. No Firebase data/rules, authentication/admin/provider-management behavior, contact implementation, or other features changed.

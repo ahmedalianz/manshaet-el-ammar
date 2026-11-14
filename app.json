@@ -1,42 +1,93 @@
 {
   "expo": {
-    "name": "manshaet-el-ammar",
+    "name": "منشأة العمار",
     "slug": "manshaet-el-ammar",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
     "scheme": "manshaetelammar",
-    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "ExpoLocalization_forcesRTL": true,
+        "CFBundleLocalizations": ["ar"]
+      },
+      "bundleIdentifier": "com.ahmedalianz.manshaetelammar"
     },
     "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
-      },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.ahmedalianz.manshaetelammar",
+      "googleServicesFile": "./google-services.json",
+      "versionCode": 3,
+      "allowBackup": false,
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.VIBRATE",
+        "android.permission.CALL_PHONE",
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS"
+      ],
+      "icon": "./assets/images/app-icon.png"
     },
     "web": {
       "bundler": "metro",
-      "output": "server",
-      "favicon": "./assets/images/favicon.png"
+      "output": "static",
+      "favicon": "./assets/images/app-icon.png"
     },
     "plugins": [
       "expo-router",
       [
+        "expo-localization",
+        {
+          "supportsRTL": true,
+          "forcesRTL": true,
+          "supportedLocales": {
+            "ios": ["ar"],
+            "android": ["ar"]
+          }
+        }
+      ],
+      [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/brand-logo.png",
+          "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "android": {
+            "image": "./assets/images/brand-emblem.png",
+            "imageWidth": 180
+          },
+          "ios": {
+            "image": "./assets/images/splash-screen.png",
+            "backgroundColor": "#EAF5FA",
+            "enableFullScreenImage_legacy": true,
+            "resizeMode": "cover"
+          }
         }
-      ]
+      ],
+      "expo-system-ui",
+      "@react-native-google-signin/google-signin",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "icon": "./assets/images/app-icon.png",
+    "userInterfaceStyle": "automatic",
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "supportsRTL": true,
+      "forcesRTL": true,
+      "eas": {
+        "projectId": "e2f0e241-c1d3-46f8-b356-e1e21ba04740"
+      }
+    },
+    "owner": "ahmedalianz"
   }
 }

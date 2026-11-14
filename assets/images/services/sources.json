@@ -1,0 +1,106 @@
+[
+  {
+    "category": "appliances",
+    "photographer": "Chris Weiher",
+    "source": "https://unsplash.com/photos/row-of-washing-machines-in-a-brightly-lit-laundromat-GcB7eqnXnwI",
+    "image": "https://images.unsplash.com/photo-1776356829215-37929a717f0d?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 80516
+  },
+  {
+    "category": "carpentry",
+    "photographer": "Yasamine June",
+    "source": "https://unsplash.com/photos/a-workbench-filled-with-lots-of-tools-2PMdixMFvvU",
+    "image": "https://images.unsplash.com/photo-1633419946251-6d8b5dd33170?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 95907
+  },
+  {
+    "category": "clinics",
+    "photographer": "Etactics Inc",
+    "source": "https://unsplash.com/photos/medical-stethoscope-on-blue-background-JkWMM8x1sLo",
+    "image": "https://images.unsplash.com/photo-1655913197692-012897652d13?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 39747
+  },
+  {
+    "category": "construction",
+    "photographer": "Theme Photos",
+    "source": "https://unsplash.com/photos/paint-roller-applying-blue-paint-Cl-OpYWFFm0",
+    "image": "https://images.unsplash.com/photo-1562259949-e8e7689d7828?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 91037
+  },
+  {
+    "category": "education",
+    "photographer": "Laura Ohlman",
+    "source": "https://unsplash.com/photos/a-stack-of-books-PLvPFD8So78",
+    "image": "https://images.unsplash.com/photo-1660593089590-655831b1dda3?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 49980
+  },
+  {
+    "category": "electricity",
+    "photographer": "Toolmash Expo",
+    "source": "https://unsplash.com/photos/electrician-testing-electrical-panel-with-multimeter-PkHf7BUWbtk",
+    "image": "https://images.unsplash.com/photo-1758101755915-462eddc23f57?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 82710
+  },
+  {
+    "category": "laundry",
+    "photographer": "Antonio Araujo",
+    "source": "https://unsplash.com/photos/a-stack-of-folded-towels-sitting-on-top-of-a-table-d0RbiJeEMQI",
+    "image": "https://images.unsplash.com/photo-1728034261564-18930dcb2c8e?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 76493
+  },
+  {
+    "category": "pharmacies",
+    "photographer": "Melany @ tuinfosalud.com",
+    "source": "https://unsplash.com/photos/a-bottle-of-pills-sitting-on-top-of-a-table-xnn6dgBVCPg",
+    "image": "https://images.unsplash.com/photo-1631980838568-8859e153f037?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 28209
+  },
+  {
+    "category": "plumbing",
+    "photographer": "Lisa Anna",
+    "source": "https://unsplash.com/photos/a-kitchen-sink-with-a-chrome-faucet-over-it-SQOQtj3utZQ",
+    "image": "https://images.unsplash.com/photo-1723259456887-91cf9bba73f8?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 35071
+  },
+  {
+    "category": "sewage-trucks",
+    "photographer": "Roger Starnes Sr",
+    "source": "https://unsplash.com/photos/a-white-tanker-truck-spraying-liquid-in-a-green-field-ih00N-rTV0c",
+    "image": "https://images.unsplash.com/photo-1782852670165-fa3d9d35a59c?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 74777
+  },
+  {
+    "category": "shops",
+    "photographer": "Iñigo De la Maza",
+    "source": "https://unsplash.com/photos/vegetables-and-fruits-s285sDw5Ikc",
+    "image": "https://images.unsplash.com/photo-1557844352-761f2565b576?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 104966
+  },
+  {
+    "category": "tailoring",
+    "photographer": "Julio Lopez",
+    "source": "https://unsplash.com/photos/a-close-up-of-a-white-sewing-machine-poIwIEbkIeQ",
+    "image": "https://images.unsplash.com/photo-1632163277091-10cdddcf6000?fit=crop&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 30027
+  },
+  {
+    "category": "transport",
+    "photographer": "Griffin Wooldridge",
+    "source": "https://unsplash.com/photos/a-white-van-parked-on-the-side-of-a-road-tusf7hYPJWc",
+    "image": "https://images.unsplash.com/photo-1737513915304-a298b4fd5865?fit=crop&crop=focalpoint&fp-x=0.5&fp-y=0.85&fp-z=2&w=640&h=640&q=82&fm=jpg",
+    "license": "https://unsplash.com/license",
+    "bytes": 140156
+  }
+]

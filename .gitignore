@@ -25,6 +25,10 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+.firebase/
 
 # macOS
 .DS_Store
@@ -39,3 +43,17 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
+
+# Release signing credentials and build artifacts
+credentials.json
+service-account*.json
+*.aab
+*.apk
+
+# Private migration rollback data
+.local-migrations/
