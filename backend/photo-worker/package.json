@@ -1,0 +1,18 @@
+{
+  "name": "ammar-photo-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --keep-vars"
+  },
+  "dependencies": {
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "wrangler": "^4.0.0"
+  }
+}

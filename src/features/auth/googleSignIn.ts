@@ -1,1 +1,5 @@
-export { googleSignIn } from './googleSignIn.web';
+export {
+  googleSignIn,
+  googleSignOut,
+  reauthenticateGoogle,
+} from './googleSignIn.web';

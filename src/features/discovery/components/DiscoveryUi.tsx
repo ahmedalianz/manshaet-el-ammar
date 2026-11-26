@@ -2,10 +2,12 @@ import {
   MotionPressable as Pressable,
   MotionReveal,
 } from '../../../components/ui/Motion';
+import { SearchEmptyArtwork } from '../../../components/brand/SearchEmptyArtwork';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import {
+  Keyboard,
   StyleSheet,
   Text,
   TextInput,
@@ -74,10 +76,12 @@ export function SearchInput({
         style={[styles.searchText, textStyle]}
         textAlign="right"
         returnKeyType="search"
-        onSubmitEditing={(event) => onSubmit?.(event.nativeEvent.text)}
+        onSubmitEditing={(event) => {
+          if (onSubmit) onSubmit(event.nativeEvent.text);
+          else Keyboard.dismiss();
+        }}
         clearButtonMode="never"
       />
-      {accessory}
       {value.length > 0 ? (
         <Pressable
           accessibilityRole="button"
@@ -101,6 +105,7 @@ export function SearchInput({
           />
         </Pressable>
       ) : null}
+      {accessory}
     </View>
   );
 }
@@ -258,34 +263,30 @@ export function EmptyState({
   onAction?: () => void;
 }) {
   const styles = useThemedStyles(createStyles);
-  const { colors } = useAppTheme();
   return (
     <MotionReveal
       animateOnMount
       changeKey={`${title}|${message}`}
       style={styles.emptyState}
     >
-      <MaterialCommunityIcons
-        name="text-search"
-        size={32}
-        color={colors.muted}
+      <View
+        pointerEvents="none"
         accessibilityElementsHidden
-      />
-      <Text accessibilityRole="header" style={styles.cardTitle}>
+        importantForAccessibility="no-hide-descendants"
+      >
+        <SearchEmptyArtwork />
+      </View>
+      <Text accessibilityRole="header" style={styles.emptyTitle}>
         {title}
       </Text>
-      <Text style={styles.categoryDescription}>{message}</Text>
+      <Text style={styles.emptyMessage}>{message}</Text>
       {actionLabel && onAction ? (
         <Pressable
           accessibilityRole="button"
           onPress={onAction}
-          style={{
-            minHeight: 48,
-            justifyContent: 'center',
-            paddingHorizontal: spacing.md,
-          }}
+          style={styles.emptyAction}
         >
-          <Text style={styles.actionLabel}>{actionLabel}</Text>
+          <Text style={styles.emptyActionText}>{actionLabel}</Text>
         </Pressable>
       ) : null}
     </MotionReveal>
@@ -322,14 +323,14 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     searchInput: {
       minHeight: 54,
-      paddingHorizontal: spacing.md,
+      paddingHorizontal: 12,
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.sm,
-      borderRadius: 14,
-      backgroundColor: colors.inputBackground,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.inputBorder,
+      borderRadius: 16,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
     searchText: {
       flex: 1,
@@ -440,8 +441,38 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       justifyContent: 'center',
       gap: spacing.sm,
-      borderRadius: 18,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: colors.border,
       backgroundColor: colors.surface,
+    },
+    emptyTitle: {
+      ...typography.sectionTitle,
+      color: colors.textPrimary,
+      textAlign: 'center',
+      writingDirection: 'rtl',
+    },
+    emptyMessage: {
+      ...typography.body,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      writingDirection: 'rtl',
+    },
+    emptyAction: {
+      minHeight: 48,
+      marginTop: spacing.xs,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      borderRadius: 14,
+      backgroundColor: colors.actionBackground,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    emptyActionText: {
+      ...typography.button,
+      color: colors.onPrimary,
+      textAlign: 'center',
+      writingDirection: 'rtl',
     },
     backHeader: {
       minHeight: 72,

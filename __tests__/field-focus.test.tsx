@@ -29,7 +29,7 @@ it('right-aligns empty Arabic placeholders and keeps numeric fields left-to-righ
         multiline
       />
       <FormField
-        label="رقم الموبايل"
+        label="رقم التواصل"
         placeholder="01012345678"
         value=""
         phone
@@ -38,7 +38,7 @@ it('right-aligns empty Arabic placeholders and keeps numeric fields left-to-righ
   );
   expect(screen.getByLabelText('اسم الخدمة').props.textAlign).toBe('right');
   expect(screen.getByLabelText('وصف الخدمة').props.textAlign).toBe('right');
-  const phone = screen.getByLabelText('رقم الموبايل');
+  const phone = screen.getByLabelText('رقم التواصل');
   expect(phone.props.textAlign).toBe('left');
   expect(StyleSheet.flatten(phone.props.style).writingDirection).toBe('ltr');
 });

@@ -2,14 +2,36 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
 import type { ProviderListing, ServiceRequest } from './types';
 
-export const reviewDecisionKey = (request: ServiceRequest) =>
-  JSON.stringify([
+export const reviewDecisionKey = (request: ServiceRequest) => {
+  if (!request.photoReviewStatus || request.photoReviewStatus === 'pending')
+    return JSON.stringify([
+      request.id,
+      request.status,
+      request.reviewedAt ?? request.createdAt,
+    ]);
+  if (request.status === 'pending')
+    return JSON.stringify([
+      request.id,
+      'photo-only',
+      request.photoReviewStatus,
+      request.photoReviewedAt ?? request.createdAt,
+    ]);
+  return JSON.stringify([
     request.id,
     request.status,
     request.reviewedAt ?? request.createdAt,
+    request.photoReviewStatus,
+    request.photoReviewedAt ?? '',
   ]);
+};
 export const reviewSeenStorageKey = (uid: string) =>
   `manshaet.review-decisions.v1.${uid}`;
+
+const decisionTimestamp = (request: ServiceRequest) =>
+  [request.reviewedAt, request.photoReviewedAt, request.createdAt]
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? request.createdAt;
 
 // Keep the latest finished review for each owned listing. Admins can see other
 // owners' requests in context, but those must never enter this private inbox.
@@ -27,13 +49,14 @@ export function latestReviewDecisions(
       (item) =>
         item.ownerId === uid &&
         owned.has(item.providerId) &&
-        item.status !== 'pending',
+        (item.status !== 'pending' ||
+          (item.photoReviewStatus !== undefined &&
+            item.photoReviewStatus !== 'pending')),
     )
     .sort(
       (a, b) =>
-        (b.reviewedAt ?? b.createdAt).localeCompare(
-          a.reviewedAt ?? a.createdAt,
-        ) || b.id.localeCompare(a.id),
+        decisionTimestamp(b).localeCompare(decisionTimestamp(a)) ||
+        b.id.localeCompare(a.id),
     )) {
     if (!latest.has(request.providerId))
       latest.set(request.providerId, request);
@@ -41,15 +64,30 @@ export function latestReviewDecisions(
   return [...latest.values()];
 }
 export function reviewDecisionMessage(request: ServiceRequest) {
+  if (
+    request.status === 'pending' &&
+    (request.photoReviewStatus === 'approved' ||
+      request.photoReviewStatus === 'rejected')
+  )
+    return request.photoReviewStatus === 'approved'
+      ? 'تم اعتماد صورة المكان (بيانات الخدمة لسه قيد المراجعة)'
+      : 'الصورة محتاجة تعديل (بيانات الخدمة لسه قيد المراجعة)';
   const subject =
     request.type === 'update'
       ? 'التعديلات'
       : request.type === 'restore'
         ? 'طلب إعادة النشر'
         : 'طلب إضافة الخدمة';
-  return request.status === 'approved'
-    ? `تمت الموافقة على ${subject}`
-    : `تم رفض ${subject}`;
+  const base =
+    request.status === 'approved'
+      ? `تمت الموافقة على ${subject}`
+      : `تم رفض ${subject}`;
+  if (
+    request.status === 'approved' &&
+    request.photoReviewStatus === 'rejected'
+  )
+    return `${base} — الصورة محتاجة تعديل`;
+  return base;
 }
 
 type Seen = { uid: string; keys: string[]; error: string | null };

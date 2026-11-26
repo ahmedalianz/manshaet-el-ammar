@@ -38,6 +38,7 @@ function ProfileContent() {
     privateError,
     configured,
     updateAccountName,
+    signOut,
   } = useProviderState();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(account?.name ?? '');
@@ -51,6 +52,28 @@ function ProfileContent() {
       active.current = false;
     };
   }, []);
+  const confirmSignOut = () =>
+    feedback.show('تسجيل الخروج', 'ترجع للتصفح كزائر؟', [
+      { text: 'إلغاء', style: 'cancel' },
+      {
+        text: 'تسجيل الخروج',
+        style: 'destructive',
+        onPress: async () => {
+          if (submitting.current) return;
+          submitting.current = true;
+          setSaving(true);
+          try {
+            await signOut();
+            router.replace('/(tabs)/more');
+          } catch (cause) {
+            feedback.show('مش قادرين نسجّل خروجك', firebaseMessage(cause));
+          } finally {
+            submitting.current = false;
+            if (active.current) setSaving(false);
+          }
+        },
+      },
+    ]);
   const save = async () => {
     if (submitting.current || !account || initializing) return;
     const nextName = name.trim();
@@ -237,6 +260,12 @@ function ProfileContent() {
               </Text>
             </View>
           </View>
+          <ProviderAction
+            title="تسجيل الخروج"
+            secondary
+            disabled={saving}
+            onPress={confirmSignOut}
+          />
           <View style={styles.deletionSection}>
             <Pressable
               accessibilityRole="button"

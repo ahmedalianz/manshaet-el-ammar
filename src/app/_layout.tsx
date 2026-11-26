@@ -27,6 +27,7 @@ import { queryClient } from '../lib/query-client';
 import { ProviderStateProvider } from '../features/provider/ProviderContext';
 import { AndroidBackBoundary } from '../features/navigation/AndroidBackBoundary';
 import { AuthProvider } from '../features/auth/AuthProvider';
+import { AppUpdatesWatcher } from '../features/updates/AppUpdatesWatcher';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -97,6 +98,7 @@ function RootContent() {
             <ProviderStateProvider>
               <LocalDirectoryProvider>
                 <FeedbackProvider>
+                  <AppUpdatesWatcher />
                   <StatusBar
                     style={
                       splashVisible

@@ -12,7 +12,7 @@ export const providers: ServiceProvider[] = [
     phone: '010 0000 0001',
     whatsapp: '010 0000 0001',
 
-    address: 'منشأة العمار — شارع المدارس (وسط البلد)',
+    address: 'منشأة العمار — شارع المدرسة (وسط البلد)',
     status: 'approved',
   },
   {

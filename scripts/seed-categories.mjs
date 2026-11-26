@@ -38,7 +38,7 @@ for (const [order, category] of categories.entries()) {
       fields: {
         ...fields,
         active: { booleanValue: true },
-        order: { integerValue: String(order) },
+        order: { integerValue: String(category.id === 'other' ? 999 : order) },
       },
     },
   });

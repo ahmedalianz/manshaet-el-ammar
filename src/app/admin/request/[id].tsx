@@ -1,3 +1,4 @@
+import { AdminPhotoReview } from '../../../features/admin/AdminPhotoReview';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ServiceOwner } from '../../../features/admin/ServiceOwner';
 import { useFeedback } from '../../../components/ui/Feedback';
@@ -5,7 +6,8 @@ import {
   useReducedMotion,
   MotionPressable as Pressable,
 } from '../../../components/ui/Motion';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { returnToRoute } from '../../../features/navigation/returnToRoute';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -54,8 +56,14 @@ function RequestDetails() {
   const feedback = useFeedback();
   const reducedMotion = useReducedMotion();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { requests, services, approveRequest, rejectRequest, adminBusy } =
-    useProviderState();
+  const {
+    requests,
+    services,
+    approveRequest,
+    rejectRequest,
+    adminBusy,
+    refresh,
+  } = useProviderState();
   const request = requests.find((item) => item.id === id);
   const current = services.find((item) => item.id === request?.providerId);
   const [rejecting, setRejecting] = useState(false);
@@ -83,7 +91,7 @@ function RequestDetails() {
       setRejecting(false);
       setReason('');
       feedback.show('تم رفض الطلب', 'سبب الرفض متاح لصاحب الخدمة.');
-      router.replace('/admin');
+      returnToRoute('/admin');
     } catch (failure) {
       setError(
         failure instanceof Error
@@ -121,7 +129,7 @@ function RequestDetails() {
                           'تم اعتماد الطلب ونشر البيانات.',
                           feedback,
                         );
-                        if (approved) router.replace('/admin');
+                        if (approved) returnToRoute('/admin');
                       },
                     },
                   ],
@@ -144,6 +152,11 @@ function RequestDetails() {
     >
       <View style={styles.reviewHero}>
         <ServiceSummary values={request.proposedData} />
+        <AdminPhotoReview
+          request={request}
+          currentPhoto={current?.placePhoto}
+          onRefresh={refresh}
+        />
         <Text style={styles.requestBadge}>
           {request.type === 'restore'
             ? 'تصحيح خدمة مخفية وطلب استرجاعها'
@@ -167,9 +180,11 @@ function RequestDetails() {
       <Text style={providerStyles.label}>
         {request.status === 'pending'
           ? 'قيد المراجعة'
-          : request.status === 'approved'
-            ? 'تمت الموافقة'
-            : 'تم رفض الطلب'}
+          : request.photoReviewStatus === 'pending'
+            ? 'بيانات الخدمة اتراجعت — مراجعة الصورة لسه معلقة'
+            : request.status === 'approved'
+              ? 'تمت الموافقة'
+              : 'تم رفض الطلب'}
       </Text>
       {request.rejectionReason ? (
         <Text style={providerStyles.notice}>{request.rejectionReason}</Text>

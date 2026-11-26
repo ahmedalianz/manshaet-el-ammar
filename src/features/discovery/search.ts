@@ -5,7 +5,13 @@ const categorySynonyms: Record<string, readonly string[]> = {
   plumbing: ['سباك', 'سباكة'],
   electricity: ['كهربائي', 'كهرباء'],
   clinics: ['دكتور', 'طبيب'],
+  pharmacies: ['صيدلي', 'صيدلية'],
   carpentry: ['نجار', 'نجارة'],
+  tailoring: ['ترزي', 'خياط'],
+  laundry: ['مكوجي', 'مغسلة'],
+  construction: ['نقاش', 'محارة'],
+  'sewage-trucks': ['كسح'],
+  other: ['تانية', 'ثانية'],
 };
 function matchesCategory(category: ServiceCategory, query: string) {
   return (
@@ -31,6 +37,25 @@ export function normalizeArabic(value: string): string {
 
 function matchesQuery(value: string, query: string): boolean {
   return normalizeArabic(value).includes(normalizeArabic(query));
+}
+
+function nameRank(name: string, query: string): number {
+  const value = normalizeArabic(name);
+  const term = normalizeArabic(query);
+  return value === term
+    ? 0
+    : value.startsWith(term)
+      ? 1
+      : value.includes(term)
+        ? 2
+        : 4;
+}
+
+function providerRank(provider: ServiceProvider, query: string): number {
+  return Math.min(
+    nameRank(provider.name, query),
+    nameRank(provider.serviceTitle, query),
+  );
 }
 
 export function searchCategories(
@@ -59,7 +84,6 @@ export function searchCategories(
           provider.name,
           provider.serviceTitle,
           provider.description,
-          ...(provider.coverageAreas ?? []),
           provider.address,
         ]),
       ].some((value) => matchesQuery(value, query))
@@ -73,7 +97,7 @@ export function searchProviders(
   source: ServiceProvider[],
   categorySource = categories,
 ) {
-  return source.filter((provider) => {
+  const matches = source.filter((provider) => {
     if (
       provider.status !== 'approved' ||
       provider.publicationStatus === 'unpublished'
@@ -90,11 +114,14 @@ export function searchProviders(
         provider.name,
         provider.serviceTitle,
         provider.description,
-        ...(provider.coverageAreas ?? []),
         provider.address,
       ].some((value) => matchesQuery(value, query))
     );
   });
+  if (!normalizeArabic(query)) return matches;
+  return matches.sort(
+    (a, b) => providerRank(a, query) - providerRank(b, query),
+  );
 }
 
 export function searchDirectory(
@@ -120,25 +147,12 @@ export function searchDirectory(
     provider,
   }));
 
-  const nameRank = (name: string) => {
-    const value = normalizeArabic(name);
-    const term = normalizeArabic(query);
-    return value === term
-      ? 0
-      : value.startsWith(term)
-        ? 1
-        : value.includes(term)
-          ? 2
-          : 4;
-  };
   const rank = (
     result: (typeof categoryResults)[number] | (typeof providerResults)[number],
   ) => {
-    if (result.type === 'category') return nameRank(result.category.name);
-    return Math.min(
-      nameRank(result.provider.name),
-      nameRank(result.provider.serviceTitle),
-    );
+    if (result.type === 'category')
+      return nameRank(result.category.name, query);
+    return providerRank(result.provider, query);
   };
   return [...categoryResults, ...providerResults]
     .sort((a, b) => rank(a) - rank(b))

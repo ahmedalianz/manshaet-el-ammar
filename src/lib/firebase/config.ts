@@ -36,7 +36,7 @@ function createApp() {
 export const firebaseApp = createApp();
 if (!firebaseApp && __DEV__)
   console.info(
-    '[Firebase] Client configuration unavailable. See .env.example and docs/firebase-setup.md.',
+    '[Firebase] Client configuration unavailable. See .env.example.',
   );
 export const useFirebaseEmulators =
   __DEV__ && process.env.EXPO_PUBLIC_FIREBASE_USE_EMULATORS === 'true';

@@ -1,0 +1,12 @@
+{
+  // ...
+  "vars": {
+    "ALLOWED_ORIGINS": "",
+    "CLOUDINARY_API_KEY": "885928476987492",
+    "CLOUDINARY_CLOUD_NAME": "sx5exugy",
+    "FIREBASE_CLIENT_EMAIL": "photo-worker@manshyat-amar.iam.gserviceaccount.com",
+    "FIREBASE_PROJECT_ID": "manshyat-amar",
+    "UPLOADS_ENABLED": "true"
+  }
+  // ...
+}

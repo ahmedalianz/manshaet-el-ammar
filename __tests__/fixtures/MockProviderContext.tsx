@@ -13,6 +13,7 @@ import type {
   MockState,
   ProviderListing,
   PublishedService,
+  ServiceClaim,
   ServiceReport,
   ServiceRequest,
   ServiceValues,
@@ -39,6 +40,8 @@ type ProviderState = {
   requests: ServiceRequest[];
   reports: ServiceReport[];
   pendingRequests: ServiceRequest[];
+  claims: ServiceClaim[];
+  pendingClaims: ServiceClaim[];
   signIn: (profile: DemoProfile) => void;
   signOut: () => void;
   submit: (
@@ -46,8 +49,28 @@ type ProviderState = {
     id?: string,
     replacePending?: boolean,
   ) => Promise<string>;
+  saveAdminService: (
+    values: ServiceValues,
+    id?: string,
+    submissionId?: string,
+  ) => Promise<string>;
   approveRequest: (id: string) => void;
   rejectRequest: (id: string, reason: string) => void;
+  submitClaim: (input: {
+    providerId: string;
+    claimantName: string;
+    claimantPhone: string;
+    note?: string;
+    consent: boolean;
+  }) => Promise<string>;
+  approveClaim: (id: string) => Promise<void>;
+  rejectClaim: (id: string, reason: string) => Promise<void>;
+  setServiceClaimable: (id: string, claimable: boolean) => Promise<void>;
+  syncClaimableServices: (ids: string[]) => Promise<{
+    updated: number;
+    failed: number;
+    lastError: string | null;
+  }>;
   unpublishService: (id: string, reason?: string) => void;
   closeReport: (id: string) => void;
   updateAccountName: (name: string) => void;
@@ -91,6 +114,14 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
     });
     return id ?? next.requests.at(-1)!.providerId;
   };
+  const saveAdminService = async (values: ServiceValues, id?: string) => {
+    const next = run({
+      type: 'adminSave',
+      values,
+      providerId: id,
+    });
+    return id ?? next.services.at(-1)!.id;
+  };
   return (
     <Context.Provider
       value={{
@@ -119,16 +150,79 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
               account?.role === 'admin' && request.status === 'pending',
           )
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        claims: (state.claims ?? []).filter(
+          (claim) => account?.role === 'admin' || claim.claimantId === userId,
+        ),
+        pendingClaims: (state.claims ?? [])
+          .filter(
+            (claim) => account?.role === 'admin' && claim.status === 'pending',
+          )
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         signIn: (profile) => {
           if (__DEV__) changeSession(`demo-${profile}`);
         },
         signOut: () => changeSession(null),
         submit,
+        saveAdminService,
         approveRequest: (id) => {
           run({ type: 'approve', requestId: id });
         },
         rejectRequest: (id, reason) => {
           run({ type: 'reject', requestId: id, reason });
+        },
+        submitClaim: async (input) => {
+          if (!input.consent)
+            throw new Error('لازم تأكّد إن الخدمة تخصّك قبل إرسال الطلب.');
+          const next = run({
+            type: 'submitClaim',
+            providerId: input.providerId,
+            claimantName: input.claimantName,
+            claimantPhone: input.claimantPhone,
+            note: input.note,
+          });
+          return (
+            next.claims?.find(
+              (item) =>
+                item.providerId === input.providerId &&
+                item.claimantId === sessionRef.current,
+            )?.id ?? ''
+          );
+        },
+        approveClaim: async (id) => {
+          run({ type: 'approveClaim', claimId: id });
+        },
+        rejectClaim: async (id, reason) => {
+          run({ type: 'rejectClaim', claimId: id, reason });
+        },
+        setServiceClaimable: async (id, claimable) => {
+          if (account?.role !== 'admin')
+            throw new Error('العملية متاحة للمشرف التجريبي فقط.');
+          const next: MockState = {
+            ...stateRef.current,
+            services: stateRef.current.services.map((item) =>
+              item.id === id ? { ...item, claimable } : item,
+            ),
+          };
+          stateRef.current = next;
+          setState(next);
+        },
+        syncClaimableServices: async (ids) => {
+          if (account?.role !== 'admin')
+            throw new Error('العملية متاحة للمشرف التجريبي فقط.');
+          let updated = 0;
+          const next: MockState = {
+            ...stateRef.current,
+            services: stateRef.current.services.map((item) => {
+              if (ids.includes(item.id) && !item.claimable) {
+                updated += 1;
+                return { ...item, claimable: true };
+              }
+              return item;
+            }),
+          };
+          stateRef.current = next;
+          setState(next);
+          return { updated, failed: 0, lastError: null };
         },
         unpublishService: (id) => {
           run({ type: 'unpublish', providerId: id });

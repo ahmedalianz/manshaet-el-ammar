@@ -7,12 +7,15 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  EmailAuthProvider,
   createUserWithEmailAndPassword,
+  deleteUser,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   sendPasswordResetEmail,
   onIdTokenChanged,
   getIdTokenResult,
+  reauthenticateWithCredential,
   updateProfile,
   type User,
 } from '@firebase/auth';
@@ -20,7 +23,15 @@ import { doc, getDoc, setDoc, serverTimestamp } from '@firebase/firestore';
 import { auth } from '../../lib/firebase/auth';
 import { db } from '../../lib/firebase/firestore';
 import { firebaseConfigurationMessage } from '../../lib/firebase/config';
-import { googleSignIn } from './googleSignIn';
+import { queryClient } from '../../lib/query-client';
+import { requestAccountDataDeletion } from '../account/deleteAccount';
+import { notifyClaimsChanged } from '../claims/useServiceClaims';
+import { localDirectory } from '../local/LocalDirectory';
+import {
+  googleSignIn,
+  googleSignOut,
+  reauthenticateGoogle,
+} from './googleSignIn';
 import { authErrorMessage } from './errors';
 
 type AuthState = {
@@ -34,6 +45,10 @@ type AuthState = {
   signOut: () => Promise<void>;
   signInGoogle: () => Promise<boolean>;
   resetPassword: (email: string) => Promise<void>;
+  deleteAccount: (options: {
+    method: 'password' | 'google';
+    password?: string;
+  }) => Promise<{ deleted: boolean; deletedProviderIds: string[] }>;
 };
 const Context = createContext<AuthState | null>(null);
 async function ensureProfile(user: User, name?: string) {
@@ -165,6 +180,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const resetPassword = async (email: string) => {
     await sendPasswordResetEmail(requireAuth(), email.trim());
   };
+  const deleteAccount: AuthState['deleteAccount'] = async (options) => {
+    const client = requireAuth();
+    const current = client.currentUser;
+    if (!current) {
+      throw Object.assign(new Error('Authentication required'), {
+        code: 'unauthenticated',
+      });
+    }
+    if (isAdmin) {
+      throw Object.assign(new Error('Admin accounts cannot be deleted'), {
+        code: 'account/admin-cannot-delete',
+      });
+    }
+    if (options.method === 'password') {
+      if (!current.email || !options.password) {
+        throw Object.assign(new Error('Password required'), {
+          code: 'auth/invalid-credential',
+        });
+      }
+      await reauthenticateWithCredential(
+        current,
+        EmailAuthProvider.credential(current.email, options.password),
+      );
+    } else {
+      const credential = await reauthenticateGoogle(current);
+      if (!credential) {
+        return { deleted: false, deletedProviderIds: [] };
+      }
+    }
+    const { deletedProviderIds } = await requestAccountDataDeletion(current);
+    for (const providerId of deletedProviderIds) {
+      localDirectory.markUnavailable(providerId);
+    }
+    notifyClaimsChanged();
+    void queryClient.invalidateQueries({ queryKey: ['public'] });
+    await clearUserDrafts(current.uid).catch(() => {});
+    await deleteUser(current);
+    await googleSignOut().catch(() => {});
+    setError(null);
+    return { deleted: true, deletedProviderIds };
+  };
   return (
     <Context.Provider
       value={{
@@ -178,6 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signInGoogle,
         signOut,
         resetPassword,
+        deleteAccount,
       }}
     >
       {children}

@@ -13,12 +13,9 @@ export function signInDestination(
       params: { id: providerId },
     } as const;
   if (next === 'support') return '/support' as const;
-  if (next === 'deletion')
-    return { pathname: '/support/new', params: { kind: 'deletion' } } as const;
+  if (next === 'deletion') return '/info/deletion' as const;
   if (admin) return '/admin' as const;
   switch (next) {
-    case 'drafts':
-      return '/provider/drafts' as const;
     case 'add':
       return '/provider/add' as const;
     case 'more':

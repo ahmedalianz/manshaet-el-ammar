@@ -1,17 +1,28 @@
-import Svg, { Path } from 'react-native-svg';
+import { ServiceDetailsPhoto } from '../../features/provider/ServiceDetailsPhoto';
 import { categoryImages } from '../../features/discovery/data/categoryImages';
-import { AvailabilityDetails } from '../../features/availability/AvailabilityDetails';
+import { ServiceWorkingHours } from '../../features/availability/ServiceWorkingHours';
+import { ServiceDetailsSection } from '../../features/provider/ServiceDetailsSection';
 import { FavoriteButton } from '../../features/local/FavoriteButton';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LoadingState } from '../../components/ui/LoadingState';
 import { usePublicProvider } from '../../features/discovery/firebaseQueries';
 import { RemoteDataNotice } from '../../features/provider/RemoteDataNotice';
-import { MotionPressable as Pressable } from '../../components/ui/Motion';
+import {
+  MotionPressable as Pressable,
+  useReducedMotion,
+} from '../../components/ui/Motion';
 import { providerContactNumber } from '../../features/discovery/contact';
 import { useProviderContactActions } from '../../features/discovery/useProviderContactActions';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { ThemeColors } from '../../theme/colors';
@@ -28,23 +39,79 @@ import {
   useProviderStyles,
 } from '../../features/provider/ProviderPage';
 import { firebaseMessage } from '../../features/auth/errors';
+import { serviceConfirmationDue } from '../../features/provider/confirmation';
+import { ProviderClaimSection } from '../../features/claims/ProviderClaimSection';
 
 export default function ProviderDetailsScreen() {
   const styles = useThemedStyles(createStyles);
   const { colors } = useAppTheme();
-  const [tipsExpanded, setTipsExpanded] = useState(false);
+  const reduced = useReducedMotion();
+  const [bottomBarVisible, setBottomBarVisible] = useState(false);
+  const [barProgress] = useState(() => new Animated.Value(0));
+  const layoutHeightRef = useRef(0);
+  const contentHeightRef = useRef(0);
+  const scrollOffsetRef = useRef(0);
+  const evaluateBottomBar = () => {
+    const scrollableDistance =
+      contentHeightRef.current - layoutHeightRef.current;
+    if (scrollableDistance <= 24 || layoutHeightRef.current <= 0) {
+      setBottomBarVisible(false);
+      return;
+    }
+    const distanceFromEnd =
+      contentHeightRef.current -
+      (scrollOffsetRef.current + layoutHeightRef.current);
+    setBottomBarVisible((current) =>
+      current
+        ? distanceFromEnd <= 84
+        : scrollOffsetRef.current > 24 && distanceFromEnd <= 48,
+    );
+  };
+  useEffect(() => {
+    barProgress.stopAnimation();
+    if (reduced !== false) {
+      barProgress.setValue(bottomBarVisible ? 1 : 0);
+      return;
+    }
+    const animation = Animated.timing(barProgress, {
+      toValue: bottomBarVisible ? 1 : 0,
+      duration: bottomBarVisible ? 240 : 180,
+      easing: bottomBarVisible
+        ? Easing.out(Easing.cubic)
+        : Easing.in(Easing.cubic),
+      useNativeDriver: true,
+      isInteraction: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [bottomBarVisible, reduced, barProgress]);
   const {
     categories,
     configured,
     publicLoading,
     publicError,
     categoriesLoading,
+    role,
+    userId,
+    initializing,
   } = useProviderState();
   const statusStyles = useProviderStyles();
   const { id } = useLocalSearchParams<{ id: string }>();
   const detail = usePublicProvider(id);
   const provider = detail.data;
-  const description = provider?.description?.trim();
+  const description = provider?.description
+    ?.split('\n')
+    .filter(
+      (line) =>
+        !(
+          provider?.weeklyHours &&
+          /^(كل يوم من|مواعيد العمل[:：]|أوقات العمل[:：]|ساعات العمل[:：])/.test(
+            line.trim(),
+          )
+        ),
+    )
+    .join('\n')
+    .trim();
   const isPublished = provider?.dataSource === 'firestore';
   const category =
     categories.find((item) => item.id === provider?.categoryId) ??
@@ -81,7 +148,7 @@ export default function ProviderDetailsScreen() {
             accessibilityRole="button"
             accessibilityLabel="رجوع"
             onPress={() => router.back()}
-            style={styles.headerAction}
+            style={[styles.headerAction, styles.backAction]}
           >
             <MaterialCommunityIcons
               name="arrow-right"
@@ -89,7 +156,11 @@ export default function ProviderDetailsScreen() {
               color={colors.primaryDark}
             />
           </Pressable>
-          <Text accessibilityRole="header" style={styles.headerTitle}>
+          <Text
+            pointerEvents="none"
+            accessibilityRole="header"
+            style={styles.headerTitle}
+          >
             تفاصيل الخدمة
           </Text>
           <Pressable
@@ -105,7 +176,9 @@ export default function ProviderDetailsScreen() {
               color={colors.primaryDark}
             />
           </Pressable>
-          <FavoriteButton provider={provider} iconOnly />
+          <View style={styles.headerAction}>
+            <FavoriteButton provider={provider} iconOnly />
+          </View>
         </View>
       ) : (
         <BackHeader title="تفاصيل الخدمة" />
@@ -130,83 +203,109 @@ export default function ProviderDetailsScreen() {
           />
         </View>
       ) : provider && category ? (
-        <>
+        <View style={styles.bodyWrap}>
           <ScrollView
+            testID="provider-details-scroll"
+            scrollEventThrottle={16}
+            onLayout={(event) => {
+              layoutHeightRef.current = event.nativeEvent.layout.height;
+              evaluateBottomBar();
+            }}
+            onContentSizeChange={(_width, height) => {
+              contentHeightRef.current = height;
+              evaluateBottomBar();
+            }}
+            onScroll={(event) => {
+              const { contentOffset, layoutMeasurement, contentSize } =
+                event.nativeEvent;
+              if (layoutMeasurement?.height)
+                layoutHeightRef.current = layoutMeasurement.height;
+              if (contentSize?.height)
+                contentHeightRef.current = contentSize.height;
+              scrollOffsetRef.current = contentOffset.y;
+              evaluateBottomBar();
+            }}
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}
           >
-            <View style={styles.villageBanner}>
-              <MaterialCommunityIcons
-                name="office-building-outline"
-                size={22}
-                color={colors.primaryDark}
-              />
-              <Text style={styles.bannerText}>منشأة العمار — بلدنا أقرب</Text>
-              <Text style={styles.directoryLabel}>دليل الخدمات</Text>
-            </View>
             <View style={styles.identityCard}>
-              {categoryImages[provider.categoryId] ? (
-                <View
-                  style={styles.cover}
-                  pointerEvents="none"
-                  accessibilityElementsHidden
-                >
-                  <Image
-                    source={categoryImages[provider.categoryId]}
-                    resizeMode="cover"
-                    style={styles.coverImage}
-                    accessible={false}
-                  />
-                  <Svg
-                    width="100%"
-                    height={48}
-                    viewBox="0 0 400 48"
-                    preserveAspectRatio="none"
-                    style={styles.coverWave}
-                  >
-                    <Path
-                      d="M0 30 C85 -10 140 60 230 28 S345 4 400 20 V48 H0Z"
-                      fill={colors.surfaceContainer}
-                    />
-                    <Path
-                      d="M0 37 C85 -3 140 67 230 35 S345 11 400 27 V48 H0Z"
-                      fill={colors.surface}
-                    />
-                  </Svg>
-                </View>
+              {provider.placePhoto || categoryImages[provider.categoryId] ? (
+                <ServiceDetailsPhoto
+                  key={provider.placePhoto?.detailUrl ?? provider.categoryId}
+                  photo={provider.placePhoto}
+                  fallback={categoryImages[provider.categoryId]}
+                />
               ) : null}
-              <View style={styles.identityBody}>
-                <View
-                  style={[
-                    styles.avatarWrap,
-                    Boolean(categoryImages[provider.categoryId]) &&
-                      styles.overlappingAvatar,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name={category.icon}
-                    size={32}
-                    color={colors.onPrimary}
-                  />
+              <View style={styles.heroIdentity}>
+                <View style={styles.identityHeading}>
+                  <View style={styles.avatarWrap}>
+                    <MaterialCommunityIcons
+                      name={category.icon}
+                      size={30}
+                      color={colors.primaryDark}
+                    />
+                  </View>
+                  <Text accessibilityRole="header" style={styles.providerName}>
+                    {provider.name}
+                  </Text>
                 </View>
-                <Text style={styles.providerName}>{provider.name}</Text>
-                <Text style={styles.serviceTitle}>{provider.serviceTitle}</Text>
-                {provider.address?.trim() ? (
+                <View style={styles.serviceBadge}>
+                  <Text style={styles.serviceTitle}>
+                    {provider.serviceTitle}
+                  </Text>
+                </View>
+                {provider.serviceMode ? (
+                  <View style={styles.serviceModeRow}>
+                    <MaterialCommunityIcons
+                      name={
+                        provider.serviceMode === 'mobile'
+                          ? 'truck-delivery-outline'
+                          : 'storefront-outline'
+                      }
+                      size={18}
+                      color={colors.primaryDark}
+                      accessibilityElementsHidden
+                    />
+                    <Text style={styles.serviceModeText}>
+                      {
+                        {
+                          fixed: 'الخدمة في مقر ثابت',
+                          mobile: 'خدمة متنقلة · تصل إليك',
+                          both: 'في المقر أو عند العميل',
+                        }[provider.serviceMode]
+                      }
+                    </Text>
+                  </View>
+                ) : null}
+                {provider.address?.trim() &&
+                !['متحرك', 'متنقل', 'خدمة متنقلة', 'بروح للعميل'].includes(
+                  provider.address.trim(),
+                ) ? (
                   <View style={styles.heroLocation}>
                     <MaterialCommunityIcons
                       name="map-marker-outline"
-                      size={19}
-                      color={colors.primaryDark}
+                      size={18}
+                      color={colors.muted}
                     />
                     <Text style={styles.heroLocationText}>
                       {provider.address}
                     </Text>
                   </View>
                 ) : null}
+              </View>
+              <View style={styles.identityBody}>
                 <View style={styles.heroContacts}>
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="اتصال"
+                    accessibilityLabel={
+                      phoneAvailable
+                        ? 'اتصال بمقدم الخدمة'
+                        : 'رقم الموبايل مش متاح دلوقتي'
+                    }
+                    accessibilityState={{
+                      disabled: !phoneAvailable || busy,
+                      busy,
+                    }}
                     disabled={!phoneAvailable || busy}
                     onPress={() => void performContact('call')}
                     style={[
@@ -217,15 +316,49 @@ export default function ProviderDetailsScreen() {
                   >
                     <MaterialCommunityIcons
                       name="phone-outline"
-                      size={21}
+                      size={24}
                       color={colors.onPrimary}
+                      accessibilityElementsHidden
                     />
                     <Text style={styles.heroCallText}>اتصال</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      phoneAvailable ? 'نسخ رقم التواصل' : 'نسخ الرقم غير متاح'
+                    }
+                    accessibilityState={{
+                      disabled: !phoneAvailable || busy,
+                      busy,
+                    }}
+                    disabled={!phoneAvailable || busy}
+                    onPress={() => void performContact('copy')}
+                    style={[
+                      styles.heroContact,
+                      styles.heroWhatsapp,
+                      (!phoneAvailable || busy) && styles.disabled,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="content-copy"
+                      size={24}
+                      color={colors.primaryDark}
+                      accessibilityElementsHidden
+                    />
+                    <Text style={styles.heroWhatsappText}>نسخ الرقم</Text>
                   </Pressable>
                   {provider.whatsapp ? (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="واتساب"
+                      accessibilityLabel={
+                        whatsappAvailable
+                          ? 'فتح واتساب مقدم الخدمة'
+                          : 'رقم واتساب مش متاح دلوقتي'
+                      }
+                      accessibilityState={{
+                        disabled: !whatsappAvailable || busy,
+                        busy,
+                      }}
                       disabled={!whatsappAvailable || busy}
                       onPress={() => void performContact('whatsapp')}
                       style={[
@@ -236,20 +369,54 @@ export default function ProviderDetailsScreen() {
                     >
                       <MaterialCommunityIcons
                         name="whatsapp"
-                        size={21}
-                        color={colors.primaryDark}
+                        size={24}
+                        color={colors.success}
+                        accessibilityElementsHidden
                       />
                       <Text style={styles.heroWhatsappText}>واتساب</Text>
                     </Pressable>
+                  ) : null}
+                </View>
+                <View style={styles.heroMetaRow}>
+                  <View style={styles.heroPhonePill}>
+                    <MaterialCommunityIcons
+                      name="phone-outline"
+                      size={16}
+                      color={colors.primaryDark}
+                      accessibilityElementsHidden
+                    />
+                    <Text style={styles.heroPhoneText}>
+                      {'\u2066'}
+                      {provider.phone}
+                      {'\u2069'}
+                    </Text>
+                  </View>
+                  {provider.whatsapp &&
+                  (!phoneAvailable ||
+                    providerContactNumber(provider, 'whatsapp') !==
+                      providerContactNumber(provider)) ? (
+                    <View style={[styles.heroPhonePill, styles.separatePhone]}>
+                      <MaterialCommunityIcons
+                        name="whatsapp"
+                        size={16}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                      <Text style={styles.heroPhoneText}>
+                        {'\u2066'}
+                        {provider.whatsapp}
+                        {'\u2069'}
+                      </Text>
+                    </View>
                   ) : null}
                 </View>
               </View>
             </View>
 
             <View style={styles.summaryRow}>
-              <View style={styles.summaryCard}>
+              <View style={[styles.summaryCard, styles.contactSummary]}>
                 <MaterialCommunityIcons
-                  name="phone-outline"
+                  name="video-outline"
                   size={26}
                   color={colors.primaryDark}
                 />
@@ -258,7 +425,7 @@ export default function ProviderDetailsScreen() {
                   <Text style={styles.summaryValue}>مباشر مع مقدم الخدمة</Text>
                 </View>
               </View>
-              <View style={styles.summaryCard}>
+              <View style={[styles.summaryCard, styles.specialtySummary]}>
                 <MaterialCommunityIcons
                   name="tools"
                   size={26}
@@ -270,7 +437,87 @@ export default function ProviderDetailsScreen() {
                 </View>
               </View>
             </View>
-            <View style={styles.sectionCard}>
+
+            <ServiceWorkingHours key={provider.id} value={provider} />
+            {description ? (
+              <ServiceDetailsSection
+                title="عن الخدمة"
+                icon="information-outline"
+                initiallyExpanded
+              >
+                <Text style={styles.aboutDescription}>{description}</Text>
+                {provider.serviceTitle.trim() &&
+                provider.serviceTitle.trim().length <= 48 ? (
+                  <View style={styles.aboutChips}>
+                    <View style={styles.aboutChip}>
+                      <MaterialCommunityIcons
+                        name={category.icon}
+                        size={19}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                      <Text style={styles.aboutChipText}>
+                        {provider.serviceTitle.trim()}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+              </ServiceDetailsSection>
+            ) : null}
+            <ServiceDetailsSection
+              title="خلّي بالك قبل ما تتواصل"
+              icon="shield-check-outline"
+              initiallyExpanded
+            >
+              <View style={styles.safetyRow}>
+                {(
+                  [
+                    {
+                      icon: 'chat-processing-outline',
+                      text: 'تواصل مباشرة مع مقدم الخدمة',
+                      tint: colors.categoryLavender,
+                      color: colors.primaryDark,
+                    },
+                    {
+                      icon: 'account-outline',
+                      text: 'تأكد من هوية مقدم الخدمة',
+                      tint: colors.categorySand,
+                      color: colors.warning,
+                    },
+                    {
+                      icon: 'credit-card-outline',
+                      text: 'لا تدفع مقدماً إلا بعد التأكد',
+                      tint: colors.errorContainer,
+                      color: colors.error,
+                    },
+                  ] as const
+                ).map((tip) => (
+                  <View key={tip.icon} style={styles.safetyTip}>
+                    <View
+                      style={[styles.safetyIcon, { backgroundColor: tip.tint }]}
+                    >
+                      <MaterialCommunityIcons
+                        name={tip.icon}
+                        size={24}
+                        color={tip.color}
+                        accessibilityElementsHidden
+                      />
+                    </View>
+                    <Text style={styles.safetyText}>{tip.text}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={styles.contactLabel}>
+                التواصل مباشر مع مقدم الخدمة. التطبيق مش بيدير حجز أو دفع،
+                ومراجعة البيانات مش ضمان لهويته أو جودة شغله.
+              </Text>
+              {!isPublished ? (
+                <Text style={styles.contactLabel}>
+                  أرقام النسخة التجريبية غير مفعلة.
+                </Text>
+              ) : null}
+            </ServiceDetailsSection>
+            <View style={styles.freshness}>
               {provider.cachedAt ? (
                 <Text style={styles.bodyText}>
                   بيانات محفوظة — آخر حفظ{' '}
@@ -278,174 +525,47 @@ export default function ProviderDetailsScreen() {
                   ممكن تكون اتغيّرت.
                 </Text>
               ) : null}
-              <AvailabilityDetails value={provider} />
               {!provider.lastConfirmedAt ? (
-                <Text style={styles.contactLabel}>
-                  لسه مفيش تأكيد حديث من صاحب الخدمة.
-                </Text>
-              ) : null}
-              {provider.lastConfirmedAt ? (
+                provider.updatedAt && !serviceConfirmationDue(provider) ? (
+                  <Text style={styles.contactLabel}>
+                    آخر تحديث منشور:{' '}
+                    {new Date(provider.updatedAt).toLocaleDateString('ar-EG')}
+                  </Text>
+                ) : (
+                  <Text style={styles.contactLabel}>
+                    لسه مفيش تأكيد حديث من صاحب الخدمة.
+                  </Text>
+                )
+              ) : (
                 <Text style={styles.contactLabel}>
                   آخر تأكيد من صاحب الخدمة:{' '}
                   {new Date(provider.lastConfirmedAt).toLocaleDateString(
                     'ar-EG',
                   )}
                 </Text>
-              ) : null}
+              )}
               {!isPublished ? (
                 <Text style={styles.demoBadgeText}>بيانات تجريبية</Text>
               ) : null}
             </View>
-            {description ? (
-              <View style={styles.sectionCard}>
-                <View style={styles.sectionHeading}>
-                  <MaterialCommunityIcons
-                    name="information-outline"
-                    size={22}
-                    color={colors.primaryDark}
-                  />
-                  <Text style={styles.sectionTitle}>عن الخدمة</Text>
-                </View>
-                <Text style={styles.bodyText}>{description}</Text>
-              </View>
+
+            {role === 'admin' &&
+            Boolean(userId) &&
+            !initializing &&
+            isPublished ? (
+              <ProviderAction
+                secondary
+                title="تعديل بيانات الخدمة"
+                onPress={() =>
+                  router.push({
+                    pathname: '/provider/edit/[id]',
+                    params: { id: provider.id, from: 'provider' },
+                  })
+                }
+              />
             ) : null}
 
-            <View style={styles.sectionCard}>
-              <View style={styles.sectionHeading}>
-                <MaterialCommunityIcons
-                  name="card-account-phone-outline"
-                  size={22}
-                  color={colors.primaryDark}
-                />
-                <Text style={styles.sectionTitle}>بيانات التواصل والعنوان</Text>
-              </View>
-              <View style={styles.contactRow}>
-                <View style={styles.contactIcon}>
-                  <MaterialCommunityIcons
-                    name="phone-outline"
-                    size={22}
-                    color={colors.primaryDark}
-                  />
-                </View>
-                <View style={styles.contactCopy}>
-                  <Text style={styles.contactLabel}>
-                    {phoneAvailable
-                      ? 'رقم الموبايل'
-                      : 'رقم الموبايل مش متاح دلوقتي'}
-                  </Text>
-                  <Text style={styles.phone}>
-                    {'\u2066'}
-                    {provider.phone}
-                    {'\u2069'}
-                  </Text>
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    phoneAvailable ? 'نسخ رقم الموبايل' : 'نسخ الرقم غير متاح'
-                  }
-                  hitSlop={{ top: 4, bottom: 4 }}
-                  disabled={!phoneAvailable || busy}
-                  accessibilityState={{
-                    disabled: !phoneAvailable || busy,
-                    busy,
-                  }}
-                  onPress={() => void performContact('copy')}
-                  style={({ pressed }) => [
-                    styles.copyButton,
-                    (!phoneAvailable || busy) && styles.disabled,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="content-copy"
-                    size={18}
-                    color={colors.primaryDark}
-                  />
-                  <Text style={styles.copyButtonText}>نسخ</Text>
-                </Pressable>
-              </View>
-              {provider.whatsapp &&
-              (!phoneAvailable ||
-                providerContactNumber(provider, 'whatsapp') !==
-                  providerContactNumber(provider)) ? (
-                <View style={styles.contactRow}>
-                  <View style={styles.contactIcon}>
-                    <MaterialCommunityIcons
-                      name="whatsapp"
-                      size={22}
-                      color={colors.primaryDark}
-                    />
-                  </View>
-                  <View style={styles.contactCopy}>
-                    <Text style={styles.contactLabel}>واتساب</Text>
-                    <Text style={styles.phone}>
-                      {'\u2066'}
-                      {provider.whatsapp}
-                      {'\u2069'}
-                    </Text>
-                  </View>
-                  {!whatsappAvailable ? (
-                    <Text style={styles.availableLabel}>غير متاح</Text>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.sectionCard}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded: tipsExpanded }}
-                onPress={() => setTipsExpanded((value) => !value)}
-                style={styles.sectionHeading}
-              >
-                <MaterialCommunityIcons
-                  name="lightbulb-outline"
-                  size={24}
-                  color={colors.primaryDark}
-                />
-                <Text style={styles.sectionTitle}>قبل ما تتفق على الشغل</Text>
-                <MaterialCommunityIcons
-                  name={tipsExpanded ? 'chevron-up' : 'chevron-down'}
-                  size={24}
-                  color={colors.textSecondary}
-                />
-              </Pressable>
-              {tipsExpanded ? (
-                <Text style={styles.bodyText}>
-                  وضّح الشغل المطلوب واتفق على السعر والميعاد قبل ما تبدأ. اتأكد
-                  من الرقم والعنوان، ومتشاركش بياناتك الحساسة أو تحوّل مقدم قبل
-                  ما تتأكد من صاحب الخدمة.
-                </Text>
-              ) : null}
-            </View>
-            <View style={[styles.sectionCard, styles.noticeCard]}>
-              <View style={styles.sectionHeading}>
-                <MaterialCommunityIcons
-                  name="information-outline"
-                  size={24}
-                  color={colors.primaryDark}
-                />
-                <Text style={styles.sectionTitle}>خلّي بالك قبل ما تتواصل</Text>
-              </View>
-              <Text style={styles.contactLabel}>عن بيانات الخدمة</Text>
-              <Text style={styles.bodyText}>
-                صاحب الخدمة هو اللي بيضيف بياناته. مراجعتها قبل النشر مش ضمان
-                لهويته أو جودة شغله.
-              </Text>
-              <Text style={styles.bodyText}>
-                التواصل مباشر مع مقدم الخدمة. التطبيق مش بيدير حجز أو دفع، ووجود
-                رقم واتساب مش معناه أكيد إن عليه حساب.
-              </Text>
-              {!isPublished ? (
-                <Text style={styles.bodyText}>
-                  أرقام النسخة التجريبية غير مفعلة.
-                </Text>
-              ) : null}
-              <Text style={styles.bodyText}>
-                لو لقيت بيانات مش صحيحة، ابعت بلاغ للمشرف من الزر اللي تحت.
-              </Text>
-            </View>
+            <ProviderClaimSection provider={provider} />
 
             <Pressable
               accessibilityRole="button"
@@ -469,72 +589,99 @@ export default function ProviderDetailsScreen() {
             </Pressable>
           </ScrollView>
 
-          <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
-            <Pressable
-              disabled={!phoneAvailable || busy}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !phoneAvailable || busy, busy }}
-              accessibilityLabel={
-                phoneAvailable
-                  ? 'اتصال بمقدم الخدمة'
-                  : 'رقم الموبايل مش متاح دلوقتي'
-              }
-              onPress={() => void performContact('call')}
-              style={[
-                styles.bottomActionDisabled,
-                phoneAvailable && styles.callEnabled,
-              ]}
-            >
-              <MaterialCommunityIcons
-                name="phone-outline"
-                size={20}
-                color={phoneAvailable ? colors.onPrimary : colors.muted}
-              />
-              <Text
-                style={[
-                  styles.bottomActionText,
-                  phoneAvailable && { color: colors.onPrimary },
-                ]}
-              >
-                اتصال
-              </Text>
-            </Pressable>
-            {provider.whatsapp ? (
+          <Animated.View
+            testID="provider-bottom-bar"
+            pointerEvents={bottomBarVisible ? 'auto' : 'none'}
+            accessibilityElementsHidden={!bottomBarVisible}
+            importantForAccessibility={
+              bottomBarVisible ? 'auto' : 'no-hide-descendants'
+            }
+            style={[
+              styles.bottomBarWrap,
+              {
+                opacity: barProgress,
+                transform: [
+                  {
+                    translateY: barProgress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [88, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
               <Pressable
-                disabled={!whatsappAvailable || busy}
+                disabled={!phoneAvailable || busy}
                 accessibilityRole="button"
-                accessibilityState={{
-                  disabled: !whatsappAvailable || busy,
-                  busy,
-                }}
+                accessibilityState={{ disabled: !phoneAvailable || busy, busy }}
                 accessibilityLabel={
-                  whatsappAvailable
-                    ? 'فتح واتساب مقدم الخدمة'
-                    : 'رقم واتساب مش متاح دلوقتي'
+                  phoneAvailable
+                    ? 'اتصال سريع بمقدم الخدمة'
+                    : 'رقم الموبايل مش متاح دلوقتي'
                 }
-                onPress={() => void performContact('whatsapp')}
+                onPress={() => void performContact('call')}
                 style={[
                   styles.bottomActionDisabled,
-                  whatsappAvailable && styles.whatsappEnabled,
+                  phoneAvailable && styles.callEnabled,
                 ]}
               >
                 <MaterialCommunityIcons
-                  name="whatsapp"
+                  name="phone-outline"
                   size={20}
-                  color={whatsappAvailable ? colors.primaryDark : colors.muted}
+                  color={phoneAvailable ? colors.onPrimary : colors.muted}
+                  accessibilityElementsHidden
                 />
                 <Text
                   style={[
-                    styles.whatsappText,
-                    whatsappAvailable && { color: colors.primaryDark },
+                    styles.bottomActionText,
+                    phoneAvailable && { color: colors.onPrimary },
                   ]}
                 >
-                  مراسلة واتساب
+                  اتصال
                 </Text>
               </Pressable>
-            ) : null}
-          </SafeAreaView>
-        </>
+              {provider.whatsapp ? (
+                <Pressable
+                  disabled={!whatsappAvailable || busy}
+                  accessibilityRole="button"
+                  accessibilityState={{
+                    disabled: !whatsappAvailable || busy,
+                    busy,
+                  }}
+                  accessibilityLabel={
+                    whatsappAvailable
+                      ? 'مراسلة مقدم الخدمة على واتساب'
+                      : 'رقم واتساب مش متاح دلوقتي'
+                  }
+                  onPress={() => void performContact('whatsapp')}
+                  style={[
+                    styles.bottomActionDisabled,
+                    whatsappAvailable && styles.whatsappEnabled,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="whatsapp"
+                    size={20}
+                    color={
+                      whatsappAvailable ? colors.primaryDark : colors.muted
+                    }
+                    accessibilityElementsHidden
+                  />
+                  <Text
+                    style={[
+                      styles.whatsappText,
+                      whatsappAvailable && { color: colors.primaryDark },
+                    ]}
+                  >
+                    مراسلة واتساب
+                  </Text>
+                </Pressable>
+              ) : null}
+            </SafeAreaView>
+          </Animated.View>
+        </View>
       ) : !configured ||
         (categoriesLoading ?? publicLoading) ||
         publicError ? null : (
@@ -553,183 +700,243 @@ export default function ProviderDetailsScreen() {
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    bodyWrap: {
+      flex: 1,
+      position: 'relative',
+    },
     detailHeader: {
+      direction: 'rtl',
       flexDirection: 'row',
       alignItems: 'center',
-      gap: spacing.sm,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
+      gap: 8,
+      paddingHorizontal: 18,
+      paddingTop: 12,
+      paddingBottom: 20,
     },
     headerAction: {
       width: 44,
       height: 44,
-      borderRadius: 16,
+      borderRadius: 22,
       backgroundColor: colors.surfaceContainer,
       alignItems: 'center',
       justifyContent: 'center',
     },
+    backAction: { marginEnd: 'auto' },
     headerTitle: {
+      position: 'absolute',
+      left: 70,
+      right: 70,
+      alignSelf: 'center',
       ...typography.title,
-      color: colors.primaryDark,
-      flex: 1,
+      color: colors.textPrimary,
       textAlign: 'center',
       writingDirection: 'rtl',
     },
-    cover: { width: '100%', aspectRatio: 2, position: 'relative' },
-    coverImage: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      width: '100%',
-      height: '100%',
+    safeArea: { flex: 1, backgroundColor: colors.background },
+    content: {
+      direction: 'rtl',
+      paddingHorizontal: 12,
+      paddingTop: 4,
+      paddingBottom: 112,
+      gap: 10,
     },
-    coverWave: { position: 'absolute', bottom: -1, left: 0 },
-    identityBody: {
+    identityCard: {
+      overflow: 'hidden',
+      borderRadius: 26,
+      backgroundColor: colors.surface,
+      shadowColor: colors.primaryDark,
+      shadowOpacity: 0.06,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
+    },
+    heroIdentity: {
       width: '100%',
-      padding: spacing.md,
-      paddingTop: 0,
-      gap: spacing.sm,
+      alignSelf: 'flex-start',
+      alignItems: 'flex-start',
+      padding: 18,
+      gap: 8,
+    },
+    identityHeading: {
+      flexDirection: 'row',
       alignItems: 'center',
+      gap: 12,
+      width: '100%',
     },
-    overlappingAvatar: { marginTop: -48 },
+    avatarWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: 15,
+      backgroundColor: colors.surfaceContainer,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 4,
+    },
+    providerName: {
+      flex: 1,
+      ...typography.hero,
+      fontSize: 24,
+      lineHeight: 36,
+      color: colors.textPrimary,
+      textAlign: 'auto',
+      writingDirection: 'rtl',
+    },
+    serviceBadge: { alignSelf: 'stretch' },
+    serviceTitle: {
+      ...typography.body,
+      color: colors.textSecondary,
+      textAlign: 'auto',
+      writingDirection: 'rtl',
+    },
     heroLocation: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-      paddingHorizontal: spacing.sm,
+      gap: 4,
+      marginTop: 4,
     },
     heroLocationText: {
-      ...typography.body,
-      color: colors.textSecondary,
+      ...typography.caption,
+      color: colors.muted,
       flexShrink: 1,
-      textAlign: 'center',
+      textAlign: 'auto',
       writingDirection: 'rtl',
     },
-    heroContacts: {
-      flexDirection: 'row',
-      gap: spacing.sm,
-      width: '100%',
-      marginTop: spacing.sm,
-    },
+    identityBody: { paddingHorizontal: 12, paddingBottom: 14, gap: 10 },
+    heroContacts: { flexDirection: 'row', gap: 8, width: '100%' },
     heroContact: {
       flex: 1,
-      minHeight: 48,
-      padding: spacing.sm,
-      borderRadius: 16,
+      minHeight: 64,
+      paddingHorizontal: 6,
+      paddingVertical: 8,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 2,
+    },
+    heroCallText: { ...typography.button, color: colors.onPrimary },
+    heroWhatsapp: { backgroundColor: colors.surfaceLow },
+    heroWhatsappText: {
+      ...typography.button,
+      fontSize: 14,
+      color: colors.primaryDark,
+    },
+    heroMetaRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignSelf: 'center',
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 24,
+      backgroundColor: colors.surfaceContainer,
+    },
+    heroPhonePill: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: spacing.sm,
+      gap: 6,
+      paddingHorizontal: 10,
+      minHeight: 34,
     },
-    heroCallText: { ...typography.button, color: colors.onPrimary },
-    heroWhatsapp: { backgroundColor: colors.surfaceContainer },
-    heroWhatsappText: { ...typography.button, color: colors.primaryDark },
-    safeArea: { flex: 1, backgroundColor: colors.background },
-    villageBanner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 24,
-      backgroundColor: colors.surfaceLow,
+    separatePhone: {
+      borderStartWidth: StyleSheet.hairlineWidth,
+      borderStartColor: colors.accent,
     },
-    bannerText: {
-      ...typography.caption,
-      flex: 1,
+    heroPhoneText: {
+      ...typography.label,
+      fontSize: 14,
       color: colors.primaryDark,
-      writingDirection: 'rtl',
-      textAlign: 'auto',
-    },
-    directoryLabel: { ...typography.caption, color: colors.textSecondary },
-    heroDecoration: {
-      position: 'absolute',
-      width: 150,
-      height: 150,
-      borderRadius: 75,
-      top: -65,
-      end: -55,
-      backgroundColor: colors.surfaceLow,
+      writingDirection: 'ltr',
     },
     summaryRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: spacing.xs,
+      gap: 10,
       borderRadius: 22,
       backgroundColor: colors.surface,
-      padding: spacing.sm,
+      padding: 10,
     },
     summaryCard: {
       flex: 1,
-      minWidth: 130,
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: spacing.sm,
-      padding: spacing.sm,
-      borderRadius: 18,
-      backgroundColor: colors.surface,
-    },
-    summaryCopy: { gap: spacing.xs, alignItems: 'center' },
-    summaryValue: {
-      ...typography.label,
-      color: colors.textPrimary,
-      writingDirection: 'rtl',
-      textAlign: 'center',
-    },
-    noticeCard: {
-      backgroundColor: colors.surfaceLow,
-      borderStartWidth: 5,
-      borderStartColor: colors.primary,
-    },
-    content: {
-      padding: spacing.md,
-      paddingBottom: spacing.md,
-      gap: spacing.md,
-    },
-    identityCard: {
-      padding: 0,
-      overflow: 'hidden',
-      alignItems: 'center',
-      gap: spacing.sm,
-      borderRadius: 18,
-      backgroundColor: colors.surface,
-    },
-    avatarWrap: {
-      width: 68,
-      height: 68,
-      borderWidth: 4,
-      borderColor: colors.surface,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 34,
-      backgroundColor: colors.primary,
-    },
-    providerName: {
-      ...typography.hero,
-      color: colors.textPrimary,
-      textAlign: 'center',
-      writingDirection: 'rtl',
-    },
-    serviceTitle: {
-      ...typography.body,
-      color: colors.primaryDark,
-      textAlign: 'center',
-      writingDirection: 'rtl',
-    },
-    addressLine: {
-      paddingHorizontal: 16,
-      paddingVertical: 6,
-      borderRadius: 24,
-      backgroundColor: colors.surfaceLow,
+      minWidth: 140,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: spacing.xs,
+      gap: 10,
+      padding: 12,
+      borderRadius: 18,
     },
-    address: {
-      ...typography.body,
+    contactSummary: { backgroundColor: colors.publishedBackground },
+    specialtySummary: { backgroundColor: colors.surfaceContainer },
+    summaryCopy: { flex: 1, gap: 0 },
+    summaryValue: {
+      ...typography.label,
+      fontSize: 13,
+      lineHeight: 22,
+      color: colors.textPrimary,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+    },
+    freshness: { paddingHorizontal: 12, paddingTop: 4, gap: 4 },
+    serviceModeText: {
+      ...typography.label,
+      fontSize: 13,
+      color: colors.primaryDark,
+      writingDirection: 'rtl',
       flexShrink: 1,
+    },
+    serviceModeRow: {
+      alignSelf: 'flex-start',
+      borderRadius: 12,
+      backgroundColor: colors.surfaceContainer,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+    },
+    aboutDescription: {
+      ...typography.body,
+      color: colors.textPrimary,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+      lineHeight: 25,
+    },
+    aboutChips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 2,
+    },
+    aboutChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 22,
+      backgroundColor: colors.surfaceLow,
+      maxWidth: '100%',
+    },
+    aboutChipText: {
+      ...typography.caption,
+      fontSize: 12,
+      color: colors.primaryDark,
+      flexShrink: 1,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+    },
+    bodyText: {
+      ...typography.body,
       color: colors.textSecondary,
+      textAlign: 'auto',
+      writingDirection: 'rtl',
+    },
+    contactLabel: {
+      ...typography.caption,
+      fontSize: 12,
+      lineHeight: 21,
+      color: colors.muted,
       textAlign: 'auto',
       writingDirection: 'rtl',
     },
@@ -738,96 +945,21 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.primaryDark,
       writingDirection: 'rtl',
     },
-    sectionCard: {
-      padding: 20,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.surfaceContainer,
-      gap: spacing.md,
-      borderRadius: 18,
-      backgroundColor: colors.surface,
-    },
-    sectionHeading: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-    },
-    sectionTitle: {
-      ...typography.sectionTitle,
-      flex: 1,
-      color: colors.textPrimary,
-      textAlign: 'auto',
-      writingDirection: 'rtl',
-    },
-    bodyText: {
-      ...typography.body,
-      color: colors.textSecondary,
-      textAlign: 'auto',
-      writingDirection: 'rtl',
-    },
-    contactRow: {
-      flexWrap: 'wrap',
-      minHeight: 80,
-      padding: spacing.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      borderRadius: 14,
-      backgroundColor: colors.surfaceLow,
-    },
-    contactIcon: {
-      width: 46,
-      height: 46,
+    safetyRow: { flexDirection: 'row', paddingTop: 4 },
+    safetyTip: { flex: 1, alignItems: 'center', gap: 6, paddingHorizontal: 6 },
+    safetyIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 21,
-      backgroundColor: colors.surface,
     },
-    contactCopy: { flex: 1, minWidth: 160, gap: 2, alignItems: 'stretch' },
-    contactLabel: {
-      ...typography.caption,
-      color: colors.muted,
-      textAlign: 'auto',
-      writingDirection: 'rtl',
-    },
-    phone: {
-      ...typography.title,
+    safetyText: {
+      ...typography.label,
+      fontSize: 13,
+      lineHeight: 22,
       color: colors.textPrimary,
-      letterSpacing: 1,
-      writingDirection: 'ltr',
-    },
-    copyButton: {
-      minHeight: 48,
-      minWidth: 48,
-      paddingHorizontal: spacing.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-      borderRadius: 12,
-      backgroundColor: colors.surface,
-    },
-    copyButtonText: { ...typography.caption, color: colors.primaryDark },
-    availableLabel: {
-      ...typography.caption,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.xs,
-      color: colors.muted,
-      borderRadius: 12,
-      backgroundColor: colors.surface,
-      writingDirection: 'rtl',
-    },
-    addressCard: {
-      minHeight: 76,
-      padding: spacing.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      borderRadius: 14,
-      backgroundColor: colors.surfaceLow,
-    },
-    addressTitle: {
-      ...typography.body,
-      color: colors.textPrimary,
-      textAlign: 'auto',
+      textAlign: 'center',
       writingDirection: 'rtl',
     },
     reportButton: {
@@ -843,14 +975,26 @@ const createStyles = (colors: ThemeColors) =>
       textAlign: 'auto',
       writingDirection: 'rtl',
     },
+    bottomBarWrap: {
+      position: 'absolute',
+      start: 0,
+      end: 0,
+      bottom: 0,
+      shadowColor: '#000',
+      shadowOpacity: 0.08,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: -4 },
+      elevation: 8,
+    },
     bottomBar: {
       paddingHorizontal: spacing.md,
       paddingTop: spacing.sm,
+      paddingBottom: spacing.sm,
       flexDirection: 'row',
       gap: spacing.sm,
       backgroundColor: colors.surface,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.surfaceContainer,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
     },
     bottomActionDisabled: {
       minHeight: 56,

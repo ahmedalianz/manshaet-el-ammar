@@ -14,7 +14,7 @@ export function usePublicProvider(id: string | undefined) {
     queryKey: ['public', 'provider', id],
     queryFn: () => fetchProvider(db!, id!),
     enabled: Boolean(db && id),
-    staleTime: 5 * 60_000,
+    staleTime: 0,
     refetchInterval: (query) => (query.state.data?.cachedAt ? 30_000 : false),
   });
   const data =

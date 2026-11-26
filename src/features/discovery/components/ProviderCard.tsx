@@ -1,8 +1,8 @@
+import { ApprovedPhoto } from '../../photos/ApprovedPhoto';
 import { FavoriteButton } from '../../local/FavoriteButton';
 import { MotionPressable as Pressable } from '../../../components/ui/Motion';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
-  Image,
   I18nManager,
   StyleSheet,
   Text,
@@ -41,7 +41,7 @@ export function ProviderCard({
   const home = presentation === 'home';
   const photo =
     presentation === 'illustrated'
-      ? categoryImages[provider.categoryId]
+      ? provider.placePhoto?.thumbnailUrl || categoryImages[provider.categoryId]
       : undefined;
   const { width, fontScale } = useWindowDimensions();
   const stackedPhoto = width < 360 || fontScale >= 1.4;
@@ -75,7 +75,20 @@ export function ProviderCard({
         >
           <View style={styles.topRow}>
             {!photo ? (
-              <CategoryIcon icon={category?.icon ?? 'briefcase-outline'} />
+              provider.placePhoto?.thumbnailUrl ? (
+                <ApprovedPhoto
+                  lazy
+                  uri={provider.placePhoto.thumbnailUrl}
+                  fallback={categoryImages[provider.categoryId]}
+                  fallbackElement={
+                    <CategoryIcon icon={category?.icon ?? 'briefcase-outline'} />
+                  }
+                  style={{ width: 48, height: 48, borderRadius: 14 }}
+                  accessibilityLabel={`صورة مكان خدمة ${provider.name}`}
+                />
+              ) : (
+                <CategoryIcon icon={category?.icon ?? 'briefcase-outline'} />
+              )
             ) : null}
             <View style={styles.details}>
               <Text style={styles.name}>{provider.name}</Text>
@@ -180,9 +193,10 @@ export function ProviderCard({
           importantForAccessibility="no-hide-descendants"
           style={[styles.photoBackdrop, stackedPhoto && styles.quietBackdrop]}
         >
-          <Image
-            source={photo}
-            resizeMode="cover"
+          <ApprovedPhoto
+            lazy
+            uri={provider.placePhoto?.thumbnailUrl}
+            fallback={categoryImages[provider.categoryId]}
             accessible={false}
             style={styles.photo}
           />

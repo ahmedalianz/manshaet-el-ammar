@@ -55,13 +55,7 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/scheduleValidation/3).data.createdAt == request.time;
     }
     function availability(data) {
-      return (!('serviceMode' in data) || data.serviceMode in ['fixed','mobile','both'])
-        && (!('coverageAreas' in data) || (data.coverageAreas is list && data.coverageAreas.size() <= 5
-          && data.coverageAreas.toSet().size() == data.coverageAreas.size()
-          && data.coverageAreas.hasOnly(['all','وسط البلد','داير الناحية','مدخل طريق طوخ','غرب السكة','محطة القطار'])
-          && (!data.coverageAreas.hasAny(['all']) || data.coverageAreas.size() == 1)))
-        && (!(data.get('serviceMode','fixed') in ['mobile','both']) || data.get('coverageAreas',[]).size() > 0)
-;
+      return !('serviceMode' in data) || data.serviceMode in ['fixed','mobile','both'];
     }
     function publicAddress(data) {
       return data.get('serviceMode','fixed') == 'mobile'
@@ -70,11 +64,11 @@ service cloud.firestore {
     function serviceValues(data) {
       return data is map
         && data.keys().hasAll(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'address'])
-        && data.keys().hasOnly(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'whatsapp', 'address', 'location', 'serviceMode','coverageAreas','weeklyHours'])
+        && data.keys().hasOnly(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'whatsapp', 'address', 'location', 'serviceMode','weeklyHours'])
         && text(data.displayName, 100)
         && text(data.serviceTitle, 160)
         && data.description is string && data.description.size() <= 2000
-        && data.phone is string && data.phone.matches('01[0125][0-9]{8}')
+        && data.phone is string && data.phone.matches('(01[0125][0-9]{8}|0(13[23][0-9]{6}|(15|57)[0-9]{6,7}|(2[0-9]|3|4[05-8]|5[05]|6[24-689]|8[2468]|9[235-7])[0-9]{7}))')
         && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.matches('01[0125][0-9]{8}')))
         && publicAddress(data) && availability(data)
         && location(data);
@@ -85,11 +79,25 @@ service cloud.firestore {
         && text(data.displayName, 100)
         && data.createdAt is timestamp && data.updatedAt == request.time;
     }
+    function validPhotoChange(data, requestId) {
+      return !data.keys().hasAny(['photoChange','photoReviewStatus'])
+        || (data.photoReviewStatus == 'pending' && data.photoChange is map
+          && data.photoChange.keys().hasOnly(['action','candidateId','expectedPhotoVersion'])
+          && ((data.photoChange.action == 'remove' && !('candidateId' in data.photoChange)
+              && ('expectedPhotoVersion' in data.photoChange)
+              && (data.photoChange.expectedPhotoVersion == null || documentId(data.photoChange.expectedPhotoVersion)))
+            || (data.photoChange.action == 'replace' && documentId(data.photoChange.candidateId)
+              && get(/databases/$(database)/documents/servicePhotos/$(data.photoChange.candidateId)).data.ownerId == request.auth.uid
+              && get(/databases/$(database)/documents/servicePhotos/$(data.photoChange.candidateId)).data.serviceId == data.providerId
+              && get(/databases/$(database)/documents/servicePhotos/$(data.photoChange.candidateId)).data.submissionId == requestId
+              && get(/databases/$(database)/documents/servicePhotos/$(data.photoChange.candidateId)).data.status == 'uploaded')));
+    }
     function validRequest(data, requestId) {
       let slotPath = /databases/$(database)/documents/requestSlots/$(data.providerId);
       let slot = getAfter(slotPath).data;
       return data.keys().hasAll(['ownerId', 'providerId', 'type', 'status', 'proposedData', 'createdAt', 'updatedAt', 'consent', 'consentedAt'])
-        && data.keys().hasOnly(['ownerId', 'providerId', 'type', 'status', 'proposedData', 'createdAt', 'updatedAt', 'consent', 'consentedAt'])
+        && data.keys().hasOnly(['ownerId', 'providerId', 'type', 'status', 'proposedData', 'createdAt', 'updatedAt', 'consent', 'consentedAt', 'photoChange', 'photoReviewStatus'])
+        && validPhotoChange(data, requestId)
         && owned(data.ownerId) && documentId(data.providerId)
         && data.type in ['create', 'update', 'restore'] && data.status == 'pending'
         && data.consent == true && data.consentedAt == request.time
@@ -135,34 +143,6 @@ service cloud.firestore {
         && data.get('weeklyHours',null) == next.proposedData.get('weeklyHours',null);
     }
 
-    function quotaReservation(uid, data, previous, limit) {
-      let ids = data.serviceIds;
-      let added = ids.removeAll(previous);
-      let slot = getAfter(/databases/$(database)/documents/requestSlots/$(added[0]));
-      let proposal = getAfter(/databases/$(database)/documents/serviceRequests/$(slot.data.requestId));
-      return data.keys().hasAll(['serviceIds', 'updatedAt'])
-        && data.keys().hasOnly(['serviceIds', 'updatedAt', 'limit'])
-        && ids is list && ids.size() <= limit && limit is int && limit >= 0 && limit <= 100
-        && ids.toSet().size() == ids.size()
-        && ids.hasAll(previous) && ids.size() == previous.size() + 1
-        && added.size() == 1 && documentId(added[0])
-        && slot.data.ownerId == uid && slot.data.providerId == added[0]
-        && slot.data.updatedAt == request.time
-        && proposal.data.ownerId == uid && proposal.data.providerId == added[0]
-        && proposal.data.type in ['create', 'restore'] && proposal.data.status == 'pending'
-        && proposal.data.createdAt == request.time
-        && data.updatedAt == request.time;
-    }
-    match /serviceQuotas/{uid} {
-      allow read: if owned(uid) || admin();
-      allow create: if admin() || (owned(uid)
-        && !('limit' in request.resource.data)
-        && quotaReservation(uid, request.resource.data, [], 3));
-      allow update: if admin() || (owned(uid)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['serviceIds', 'updatedAt'])
-        && quotaReservation(uid, request.resource.data, resource.data.serviceIds, resource.data.get('limit', 3)));
-      allow delete: if admin();
-    }
     match /users/{uid} {
       allow read: if owned(uid) || admin();
       allow create: if owned(uid) && validProfile(request.resource.data)
@@ -175,27 +155,69 @@ service cloud.firestore {
       allow read: if admin() || resource.data.active == true;
       allow write: if admin();
     }
+    function validOwnershipTransfer(providerId, old, next) {
+      let claimPath = /databases/$(database)/documents/serviceClaims/$(providerId + '_' + next.ownerId);
+      return admin()
+        && old.get('claimable', false) == true
+        && documentId(next.ownerId)
+        && next.ownerId != old.ownerId
+        && next.diff(old).affectedKeys().hasOnly(['ownerId', 'claimable', 'updatedAt'])
+        && next.claimable == false
+        && next.updatedAt == request.time
+        && exists(claimPath)
+        && get(claimPath).data.status == 'pending'
+        && existsAfter(claimPath)
+        && getAfter(claimPath).data.status == 'approved'
+        && getAfter(claimPath).data.reviewedAt == request.time;
+    }
     match /providers/{providerId} {
       allow read: if true;
-      allow create: if admin() && noLegacyArea(request.resource.data);
+      allow create: if admin() && noLegacyArea(request.resource.data)
+        && (!('claimable' in request.resource.data) || request.resource.data.claimable is bool)
+        && validProviderPhotoWrite(providerId, request.resource.data, null);
       allow delete: if admin();
-      allow update: if noLegacyArea(request.resource.data) && (admin() || (owned(resource.data.ownerId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastConfirmedAt'])
-        && request.resource.data.lastConfirmedAt == request.time));
+      allow update: if noLegacyArea(request.resource.data)
+        && ((admin() && request.resource.data.ownerId == resource.data.ownerId
+            && (!('claimable' in request.resource.data) || request.resource.data.claimable is bool)
+            && validProviderPhotoWrite(providerId, request.resource.data, resource.data))
+          || validOwnershipTransfer(providerId, resource.data, request.resource.data)
+          || (owned(resource.data.ownerId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastConfirmedAt'])
+            && request.resource.data.lastConfirmedAt == request.time));
     }
     function archiveAvailabilityMatchesPublication(data, providerId) {
       let published = get(/databases/$(database)/documents/providers/$(providerId)).data;
       return data.get('weeklyHours',null) == published.get('weeklyHours',null)
         && data.get('serviceMode',null) == published.get('serviceMode',null)
-        && data.get('coverageAreas',null) == published.get('coverageAreas',null);
+        && data.get('placePhoto',null) == published.get('placePhoto',null);
+    }
+    function validApprovedPhoto(photo) {
+      return photo == null || (photo is map
+        && photo.keys().hasAll(['version','thumbnailUrl','detailUrl','width','height'])
+        && photo.keys().hasOnly(['version','thumbnailUrl','detailUrl','width','height'])
+        && documentId(photo.version)
+        && text(photo.thumbnailUrl,2000) && photo.thumbnailUrl.matches('https://res[.]cloudinary[.]com/sx5exugy/.*')
+        && text(photo.detailUrl,2000) && photo.detailUrl.matches('https://res[.]cloudinary[.]com/sx5exugy/.*')
+        && photo.width is number && photo.width > 0 && photo.width <= 1280
+        && photo.height is number && photo.height > 0 && photo.height <= 1280);
+    }
+    function validProviderPhotoWrite(providerId, data, previous) {
+      return !('placePhoto' in data)
+        || (validApprovedPhoto(data.placePhoto)
+          && (data.placePhoto == null
+            || (previous != null && data.placePhoto == previous.get('placePhoto', null))
+            || (exists(/databases/$(database)/documents/requestSlots/$(providerId))
+              && data.placePhoto == get(/databases/$(database)/documents/serviceRequests/$(get(/databases/$(database)/documents/requestSlots/$(providerId)).data.requestId)).data.get('approvedPlacePhoto', null))));
     }
     function validArchive(data) {
       return data.keys().hasAll(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'address', 'ownerId', 'publishedAt', 'archiveStatus', 'unpublishReason', 'unpublishedAt', 'unpublishedBy'])
-        && data.keys().hasOnly(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'whatsapp', 'address', 'location', 'ownerId', 'publishedAt', 'archiveStatus', 'unpublishReason', 'unpublishedAt', 'unpublishedBy', 'restoredAt', 'restoredBy','serviceMode','coverageAreas','weeklyHours'])
+        && data.keys().hasOnly(['displayName', 'categoryId', 'serviceTitle', 'description', 'phone', 'whatsapp', 'address', 'location', 'ownerId', 'publishedAt', 'archiveStatus', 'unpublishReason', 'unpublishedAt', 'unpublishedBy', 'restoredAt', 'restoredBy','serviceMode','weeklyHours','placePhoto','claimable'])
+        && (!('claimable' in data) || data.claimable is bool)
+        && validApprovedPhoto(data.get('placePhoto',null))
         && documentId(data.ownerId) && documentId(data.categoryId)
         && text(data.displayName, 100) && text(data.serviceTitle, 160)
         && data.description is string && data.description.size() <= 2000
-        && data.phone is string && data.phone.matches('01[0125][0-9]{8}')
+        && data.phone is string && data.phone.matches('(01[0125][0-9]{8}|0(13[23][0-9]{6}|(15|57)[0-9]{6,7}|(2[0-9]|3|4[05-8]|5[05]|6[24-689]|8[2468]|9[235-7])[0-9]{7}))')
         && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.matches('01[0125][0-9]{8}')))
         && publicAddress(data) && availability(data) && location(data)
         && data.publishedAt is timestamp && data.unpublishedAt is timestamp
@@ -214,6 +236,7 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/providers/$(providerId)).data.ownerId == request.resource.data.ownerId
         && !existsAfter(/databases/$(database)/documents/providers/$(providerId));
       allow update: if admin() && validArchive(request.resource.data)
+        && noLegacyArea(request.resource.data)
         && request.resource.data.ownerId == resource.data.ownerId
         && ((request.resource.data.archiveStatus == 'unpublished'
           && request.resource.data.unpublishedAt == request.time
@@ -221,6 +244,18 @@ service cloud.firestore {
           && archiveAvailabilityMatchesPublication(request.resource.data,providerId)
           && exists(/databases/$(database)/documents/providers/$(providerId))
           && !existsAfter(/databases/$(database)/documents/providers/$(providerId)))
+        || (resource.data.archiveStatus == 'unpublished'
+          && request.resource.data.archiveStatus == 'unpublished'
+          && !exists(/databases/$(database)/documents/providers/$(providerId))
+          && !existsAfter(/databases/$(database)/documents/providers/$(providerId))
+          && request.resource.data.publishedAt == resource.data.publishedAt
+          && request.resource.data.unpublishedAt == resource.data.unpublishedAt
+          && request.resource.data.unpublishedBy == resource.data.unpublishedBy
+          && request.resource.data.unpublishReason == resource.data.unpublishReason
+          && !('restoredAt' in request.resource.data)
+          && !('restoredBy' in request.resource.data)
+          && exists(/databases/$(database)/documents/categories/$(request.resource.data.categoryId))
+          && get(/databases/$(database)/documents/categories/$(request.resource.data.categoryId)).data.active == true)
         || (resource.data.archiveStatus == 'unpublished' && request.resource.data.archiveStatus == 'restored'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archiveStatus', 'restoredAt', 'restoredBy'])
           && request.resource.data.restoredAt == request.time
@@ -234,10 +269,9 @@ service cloud.firestore {
           || owned(resource.data.ownerId)));
       allow list: if admin() || owned(resource.data.ownerId);
       allow create: if noLegacyArea(request.resource.data) && (admin() || (validRequest(request.resource.data, requestId)
-        && validRequestTarget(request.resource.data)
-        && (request.resource.data.type == 'update'
-          || getAfter(/databases/$(database)/documents/serviceQuotas/$(request.auth.uid)).data.serviceIds.hasAny([request.resource.data.providerId]))));
-      allow update: if admin() && noLegacyArea(request.resource.data);
+        && validRequestTarget(request.resource.data)));
+      allow update: if admin() && noLegacyArea(request.resource.data)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['photoChange', 'photoReviewStatus', 'photoReviewReason', 'photoReviewedBy', 'photoReviewedAt', 'approvedPlacePhoto']);
       allow delete: if admin();
     }
     match /serviceRequests/{requestId}/scheduleValidation/{chunk} {
@@ -286,33 +320,102 @@ service cloud.firestore {
     }
     function validSupport(data) {
       return data.keys().hasAll(['ownerId','kind','message','status','createdAt','updatedAt'])
-        && data.keys().hasOnly(['ownerId','kind','message','status','createdAt','updatedAt','consent','consentedAt','staffNote','reviewedAt'])
-        && documentId(data.ownerId) && data.kind in ['support','deletion'] && text(data.message,2000)
+        && data.keys().hasOnly(['ownerId','kind','message','status','createdAt','updatedAt','staffNote','reviewedAt'])
+        && documentId(data.ownerId) && data.kind == 'support' && text(data.message,2000)
         && data.createdAt is timestamp && data.updatedAt == request.time
-        && (data.kind == 'support' ? data.status in ['received','in_review','resolved','rejected']
-          : data.status in ['received','in_review','awaiting_verification','ready_for_deletion','rejected'])
+        && data.status in ['received','in_review','resolved','rejected']
         && (!('staffNote' in data) || (data.staffNote is string && data.staffNote.size() <= 2000))
-        && (!('reviewedAt' in data) || data.reviewedAt is timestamp)
-        && (data.kind != 'deletion' || (data.consent == true && data.consentedAt is timestamp));
+        && (!('reviewedAt' in data) || data.reviewedAt is timestamp);
     }
     function supportTransition(old, next) {
       return (old.status == 'received' && next.status in ['in_review','rejected'])
-        || (old.status == 'in_review' && (old.kind == 'support' ? next.status in ['resolved','rejected'] : next.status in ['awaiting_verification','rejected']))
-        || (old.kind == 'deletion' && old.status == 'awaiting_verification' && next.status in ['ready_for_deletion','rejected']);
+        || (old.status == 'in_review' && next.status in ['resolved','rejected']);
     }
     match /supportRequests/{requestId} {
       allow get: if admin() || (signedIn() && (!exists(/databases/$(database)/documents/supportRequests/$(requestId)) || owned(resource.data.ownerId)));
       allow list: if admin() || owned(resource.data.ownerId);
       allow create: if signedIn() && validSupport(request.resource.data) && owned(request.resource.data.ownerId)
         && request.resource.data.status == 'received' && request.resource.data.createdAt == request.time
-        && !('staffNote' in request.resource.data) && !('reviewedAt' in request.resource.data)
-        && (request.resource.data.kind == 'deletion' ? request.resource.data.consentedAt == request.time
-          : !('consent' in request.resource.data) && !('consentedAt' in request.resource.data));
+        && !('staffNote' in request.resource.data) && !('reviewedAt' in request.resource.data);
       allow update: if admin() && validSupport(request.resource.data)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','staffNote','reviewedAt','updatedAt'])
         && request.resource.data.reviewedAt == request.time && supportTransition(resource.data,request.resource.data)
         && (request.resource.data.status != 'rejected' || text(request.resource.data.staffNote,2000));
       allow delete: if false;
+    }
+    function validClaimTarget(data) {
+      let providerPath = /databases/$(database)/documents/providers/$(data.providerId);
+      return exists(providerPath)
+        && get(providerPath).data.get('claimable', false) == true
+        && get(providerPath).data.ownerId != request.auth.uid
+        && data.serviceName == get(providerPath).data.displayName
+        && data.serviceTitle == get(providerPath).data.serviceTitle;
+    }
+    function validClaimSubmission(data, claimId) {
+      return signedIn() && !admin()
+        && data.keys().hasAll(['providerId', 'serviceName', 'serviceTitle', 'claimantId', 'claimantName', 'claimantPhone', 'note', 'status', 'consent', 'consentedAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['providerId', 'serviceName', 'serviceTitle', 'claimantId', 'claimantName', 'claimantPhone', 'note', 'status', 'consent', 'consentedAt', 'createdAt', 'updatedAt'])
+        && documentId(data.providerId)
+        && owned(data.claimantId)
+        && claimId == data.providerId + '_' + request.auth.uid
+        && text(data.serviceName, 100)
+        && text(data.serviceTitle, 160)
+        && text(data.claimantName, 100)
+        && data.claimantPhone is string && data.claimantPhone.matches('01[0125][0-9]{8}')
+        && data.note is string && data.note.size() <= 1000
+        && data.status == 'pending'
+        && data.consent == true && data.consentedAt == request.time
+        && data.createdAt == request.time && data.updatedAt == request.time
+        && validClaimTarget(data);
+    }
+    function approvedClaimEffects(old) {
+      let providerPath = /databases/$(database)/documents/providers/$(old.providerId);
+      return existsAfter(providerPath)
+        && getAfter(providerPath).data.ownerId == old.claimantId
+        && getAfter(providerPath).data.get('claimable', false) == false;
+    }
+    function validAdminClaimReview(old, next) {
+      return admin()
+        && old.status == 'pending'
+        && next.status in ['approved', 'rejected']
+        && next.keys().hasAll(['providerId', 'serviceName', 'serviceTitle', 'claimantId', 'claimantName', 'claimantPhone', 'note', 'status', 'consent', 'consentedAt', 'createdAt', 'updatedAt', 'reviewedBy', 'reviewedAt'])
+        && next.keys().hasOnly(['providerId', 'serviceName', 'serviceTitle', 'claimantId', 'claimantName', 'claimantPhone', 'note', 'status', 'consent', 'consentedAt', 'createdAt', 'updatedAt', 'reviewedBy', 'reviewedAt', 'rejectionReason'])
+        && next.diff(old).affectedKeys().hasOnly(['status', 'updatedAt', 'reviewedBy', 'reviewedAt', 'rejectionReason'])
+        && next.reviewedBy == request.auth.uid
+        && next.reviewedAt == request.time
+        && next.updatedAt == request.time
+        && ((next.status == 'rejected' && text(next.rejectionReason, 1000))
+          || (next.status == 'approved'
+            && !('rejectionReason' in next)
+            && approvedClaimEffects(old)));
+    }
+    match /serviceClaims/{claimId} {
+      allow get: if admin() || (signedIn()
+        && (!exists(/databases/$(database)/documents/serviceClaims/$(claimId))
+          || owned(resource.data.claimantId)));
+      allow list: if admin() || owned(resource.data.claimantId);
+      allow create: if validClaimSubmission(request.resource.data, claimId);
+      allow update: if (resource.data.status == 'rejected'
+          && validClaimSubmission(request.resource.data, claimId))
+        || validAdminClaimReview(resource.data, request.resource.data);
+      allow delete: if admin();
+    }
+    match /servicePhotos/{candidateId} {
+      allow read: if admin() || owned(resource.data.ownerId);
+      allow write: if false;
+    }
+    match /photoUploadQuotas/{uid} { allow read, write: if false; }
+    match /photoServiceCleanupJobs/{jobId} {
+      allow read: if admin();
+      allow create: if admin()
+        && request.resource.data.keys().hasAll(['providerId','ownerId','reason','createdAt','state'])
+        && request.resource.data.keys().hasOnly(['providerId','ownerId','reason','createdAt','state'])
+        && documentId(request.resource.data.ownerId)
+        && documentId(request.resource.data.providerId)
+        && request.resource.data.reason in ['delete','unpublish']
+        && request.resource.data.state == 'pending'
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
     }
     match /{document=**} {
       allow read, write: if false;

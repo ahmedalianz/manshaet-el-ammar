@@ -51,6 +51,7 @@ it('shows the guest role and preserves public info and sign-in routes without pr
     </FeedbackProvider>,
   );
   expect(screen.getByText('حساب زائر')).toBeTruthy();
+  expect(screen.queryByText('مسودات الخدمات')).toBeNull();
   expect(screen.queryByRole('button', { name: /^خدماتي/ })).toBeNull();
   expect(screen.queryByText('إدارة الخدمات')).toBeNull();
   await fireEvent.press(screen.getByText('تسجيل الدخول / إنشاء حساب'));
@@ -62,6 +63,8 @@ it('shows the guest role and preserves public info and sign-in routes without pr
     screen.getByRole('button', { name: 'حذف الحساب والبيانات' }),
   );
   expect(router.push).toHaveBeenLastCalledWith('/info/deletion');
+  await fireEvent.press(screen.getByRole('button', { name: 'المفضلة' }));
+  expect(router.push).toHaveBeenLastCalledWith('/favorites');
 });
 it('uses the provider listing count for My Services and keeps profile access', async () => {
   await render(
@@ -70,6 +73,7 @@ it('uses the provider listing count for My Services and keeps profile access', a
     </FeedbackProvider>,
   );
   expect(screen.getByText('مزود خدمة')).toBeTruthy();
+  expect(screen.queryByText('مسودات الخدمات')).toBeNull();
   await fireEvent.press(
     screen.getByRole('button', { name: 'خدماتي، عدد الخدمات: ٢' }),
   );
@@ -87,6 +91,7 @@ it('shows admin identity and current queue only for an admin', async () => {
     </FeedbackProvider>,
   );
   expect(screen.getByText('مشرف الدليل')).toBeTruthy();
+  expect(screen.queryByText('مسودات الخدمات')).toBeNull();
   await fireEvent.press(
     screen.getByRole('button', { name: 'إدارة الخدمات، 2 طلبات جديدة' }),
   );

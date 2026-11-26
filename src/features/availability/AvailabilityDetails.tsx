@@ -8,12 +8,9 @@ import { formatAvailabilityField } from './format';
 import { modeNames } from './AvailabilityFields';
 export function AvailabilityDetails({ value }: { value: Availability }) {
   const { colors } = useAppTheme();
-  const lines = [
-    value.serviceMode ? modeNames[value.serviceMode] : '',
-    value.coverageAreas
-      ?.map((area) => (area === 'all' ? 'كل منشأة العمار' : area))
-      .join('، ') ?? '',
-  ].filter(Boolean);
+  const lines = [value.serviceMode ? modeNames[value.serviceMode] : ''].filter(
+    Boolean,
+  );
   const [expanded, setExpanded] = useState(false);
   const hours = formatAvailabilityField('weeklyHours', value);
   const hasHours = hours !== 'غير محدد';

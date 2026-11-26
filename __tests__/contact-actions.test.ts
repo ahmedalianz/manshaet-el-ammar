@@ -43,8 +43,7 @@ describe('Egyptian contact numbers', () => {
     '01012345678;123',
     '++201012345678',
     '010/12345678',
-    '0221234567',
-  ])('rejects %s including unsupported landlines', (value) =>
+  ])('rejects %s when malformed', (value) =>
     expect(normalizeContactNumber(value)).toBeNull(),
   );
   it('builds restricted URLs', () => {

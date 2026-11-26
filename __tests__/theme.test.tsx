@@ -199,7 +199,7 @@ describe('appearance UI and session independence', () => {
     await render(
       <AppThemeProvider>
         <FormField
-          label="رقم الموبايل"
+          label="رقم التواصل"
           value="01012345678"
           phone
           error="راجع الرقم"
@@ -208,12 +208,12 @@ describe('appearance UI and session independence', () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByLabelText('رقم الموبايل').props.keyboardAppearance,
+        screen.getByLabelText('رقم التواصل').props.keyboardAppearance,
       ).toBe('dark'),
     );
-    expect(screen.getByLabelText('رقم الموبايل').props.textAlign).toBe('left');
+    expect(screen.getByLabelText('رقم التواصل').props.textAlign).toBe('left');
     expect(
-      screen.getByLabelText('رقم الموبايل').props.allowFontScaling,
+      screen.getByLabelText('رقم التواصل').props.allowFontScaling,
     ).not.toBe(false);
     expect(screen.getByText('راجع الرقم').props.accessibilityLiveRegion).toBe(
       'polite',

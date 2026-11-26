@@ -1,6 +1,5 @@
 import { localDirectory, isTransientReadError } from '../local/LocalDirectory';
 import { validateAvailability } from '../availability/validation';
-import { reserveService } from './serviceLimit';
 import { readWithDeadline } from '../../lib/network';
 import {
   collection,
@@ -173,7 +172,7 @@ export async function submitRequest(
   checkedId(uid);
   if (!consent) throw new Error('لازم توافق على عرض البيانات قبل الإرسال.');
   if (Object.keys(validateAvailability(values, true)).length)
-    throw new Error('راجع طريقة تقديم الخدمة والتغطية والمواعيد.');
+    throw new Error('راجع طريقة تقديم الخدمة والمواعيد.');
   const proposedData = toStoredValues(values);
   const requestId = checkedId(
     submissionId ?? doc(collection(db, 'serviceRequests')).id,
@@ -182,12 +181,10 @@ export async function submitRequest(
   const requestRef = doc(db, 'serviceRequests', requestId);
   const slotRef = doc(db, 'requestSlots', providerId);
   const providerRef = doc(db, 'providers', providerId);
-  const quotaRef = doc(db, 'serviceQuotas', uid);
   await runTransaction(db, async (transaction) => {
     const existing = await transaction.get(requestRef);
     const slot = await transaction.get(slotRef);
     const provider = await transaction.get(providerRef);
-    const quota = await transaction.get(quotaRef);
     const archive = await transaction.get(
       doc(db, 'archivedProviders', providerId),
     );
@@ -210,7 +207,9 @@ export async function submitRequest(
       if (
         data.ownerId !== uid ||
         data.providerId !== providerId ||
-        !storedValuesMatch(data.proposedData, proposedData)
+        !storedValuesMatch(data.proposedData, proposedData) ||
+        JSON.stringify(data.photoChange ?? { action: 'keep' }) !==
+          JSON.stringify(values.photoChange ?? { action: 'keep' })
       )
         throw new Error('معرّف الإرسال مستخدم لطلب مختلف. ابدأ محاولة جديدة.');
       return;
@@ -238,16 +237,15 @@ export async function submitRequest(
     )
       throw new Error('الخدمة أو الطلب السابق غير متاح.');
     const now = serverTimestamp();
-    const quotaData = quota.exists() ? quota.data() : undefined;
-    const serviceIds = !provider.exists()
-      ? reserveService(quotaData, providerId)
-      : undefined;
     transaction.set(requestRef, {
       ownerId: uid,
       providerId,
       type: restoring ? 'restore' : provider.exists() ? 'update' : 'create',
       status: 'pending',
       proposedData,
+      ...(values.photoChange && values.photoChange.action !== 'keep'
+        ? { photoChange: values.photoChange, photoReviewStatus: 'pending' }
+        : {}),
       createdAt: now,
       updatedAt: now,
       consent: true,
@@ -269,8 +267,6 @@ export async function submitRequest(
         ? { weeklyHours: proposedData.weeklyHours }
         : {}),
     });
-    if (serviceIds)
-      transaction.set(quotaRef, { ...quotaData, serviceIds, updatedAt: now });
   });
   return providerId;
 }

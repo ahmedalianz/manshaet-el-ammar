@@ -100,10 +100,10 @@ it('keeps unpublished services in a searchable archive with their reason and a d
   const service = mockState.services.find(
     (item) => item.id === 'owned-unpublished',
   )!;
-  service.unpublishReason = 'راجع رقم الموبايل';
+  service.unpublishReason = 'راجع رقم التواصل';
   await render(<Dashboard />);
   await fireEvent.press(screen.getByRole('tab', { name: 'الأرشيف' }));
-  expect(screen.getByText('سبب الإخفاء: راجع رقم الموبايل')).toBeTruthy();
+  expect(screen.getByText('سبب الإخفاء: راجع رقم التواصل')).toBeTruthy();
   await fireEvent.press(
     screen.getByRole('button', { name: `إدارة ${service.serviceTitle}` }),
   );

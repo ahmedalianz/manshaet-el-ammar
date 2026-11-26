@@ -1,4 +1,8 @@
-import { normalizeMobile } from '../provider/validation';
+import {
+  normalizeMobile,
+  validateMobile,
+  validatePhone,
+} from '../provider/validation';
 import type { ServiceProvider } from './types';
 
 export function normalizeContactNumber(
@@ -6,12 +10,13 @@ export function normalizeContactNumber(
 ): string | null {
   if (!value) return null;
   const local = normalizeMobile(value);
-  return /^01[0125]\d{8}$/.test(local) ? `+20${local.slice(1)}` : null;
+  return !validatePhone(local) ? `+20${local.slice(1)}` : null;
 }
 export function contactUrl(
   value: string,
   action: 'call' | 'whatsapp',
 ): string | null {
+  if (action === 'whatsapp' && validateMobile(value)) return null;
   const number = normalizeContactNumber(value);
   return number
     ? action === 'call'
@@ -29,6 +34,8 @@ export function providerContactNumber(
     provider.publicationStatus !== 'published'
   )
     return null;
+  if (action === 'whatsapp' && validateMobile(provider.whatsapp ?? ''))
+    return null;
   return normalizeContactNumber(
     action === 'whatsapp' ? provider.whatsapp : provider.phone,
   );
@@ -42,7 +49,10 @@ export async function launchContactUrl(
   url: string,
   linking: LinkingApi,
 ): Promise<Result> {
-  if (!/^(tel:\+201[0125]\d{8}|https:\/\/wa\.me\/201[0125]\d{8})$/.test(url))
+  const call =
+    url.startsWith('tel:') && contactUrl(url.slice(4), 'call') === url;
+  const whatsapp = /^https:\/\/wa\.me\/201[0125]\d{8}$/.test(url);
+  if (!call && !whatsapp)
     return { ok: false, message: 'رقم التواصل غير صحيح.' };
   try {
     if (linking.canOpenURL && !(await linking.canOpenURL(url)))

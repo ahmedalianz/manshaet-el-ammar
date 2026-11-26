@@ -119,6 +119,46 @@ describe('Stitch Discover design', () => {
     );
     expect(router.push).toHaveBeenCalledWith('/info/contact');
   });
+  it('filters other-category services via category chip and modal filter', async () => {
+    const previous = mockState.publicProviders;
+    try {
+      mockState.publicProviders = [
+        ...providers,
+        {
+          ...providers[0],
+          id: 'provider-other-1',
+          name: 'استوديو النور للتصوير (بيانات تجريبية)',
+          categoryId: 'other',
+          serviceTitle: 'تصوير مناسبات وأفراح',
+        },
+      ];
+      await render(<Explore />);
+      await fireEvent.press(
+        screen.getByRole('button', { name: 'خدمات تانية' }),
+      );
+      expect(
+        screen.getByText('استوديو النور للتصوير (بيانات تجريبية)'),
+      ).toBeTruthy();
+      expect(screen.queryByText(providers[0].name)).toBeNull();
+
+      await fireEvent.press(screen.getByRole('button', { name: 'الكل' }));
+      await fireEvent.press(
+        screen.getByRole('button', { name: 'تصفية الأقسام' }),
+      );
+      await fireEvent.press(
+        screen.getAllByRole('button', { name: 'خدمات تانية' }).at(-1)!,
+      );
+      expect(
+        screen.getByRole('button', { name: 'إزالة فلتر خدمات تانية' }),
+      ).toBeTruthy();
+      expect(
+        screen.getByText('استوديو النور للتصوير (بيانات تجريبية)'),
+      ).toBeTruthy();
+      expect(screen.queryByText(providers[0].name)).toBeNull();
+    } finally {
+      mockState.publicProviders = previous;
+    }
+  });
 });
 
 it('keeps legacy group filter links working in an already mounted Explore tab', async () => {

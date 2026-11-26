@@ -199,29 +199,19 @@ it('keeps complex and overnight schedules in advanced mode and confirms clearing
   expect(change).toHaveBeenCalledWith({ ...value, weeklyHours: undefined });
 });
 
-it.each([undefined, ['وسط البلد']])(
-  'removes coverage controls and preserves stored coverage (%s)',
-  async (coverageAreas) => {
-    const change = jest.fn();
-    await render(
-      <AvailabilityFields
-        value={{ serviceMode: 'fixed', coverageAreas }}
-        onChange={change}
-        disabled={false}
-        errors={{}}
-      />,
-    );
-    await fireEvent.press(screen.getByRole('button', { name: 'بروح للعميل' }));
-    expect(change).toHaveBeenCalledWith({
-      serviceMode: 'mobile',
-      coverageAreas: coverageAreas ?? ['all'],
-    });
-    expect(screen.queryByText('مناطق التغطية *')).toBeNull();
-    expect(
-      screen.queryByRole('button', { name: 'كل منشأة العمار' }),
-    ).toBeNull();
-  },
-);
+it('switches to a travelling service without adding coverage data', async () => {
+  const change = jest.fn();
+  await render(
+    <AvailabilityFields
+      value={{ serviceMode: 'fixed' }}
+      onChange={change}
+      disabled={false}
+      errors={{}}
+    />,
+  );
+  await fireEvent.press(screen.getByRole('button', { name: 'بروح للعميل' }));
+  expect(change).toHaveBeenCalledWith({ serviceMode: 'mobile' });
+});
 
 it('asks for specific working days before showing their time fields', async () => {
   function Form() {

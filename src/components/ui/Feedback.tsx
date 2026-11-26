@@ -40,6 +40,7 @@ export type FeedbackApi = {
     buttons?: FeedbackButton[],
     options?: { key?: string; tone?: Tone },
   ) => void;
+  dismiss?: (key: string) => void;
 };
 type Notice = { id: number; title: string; message: string; tone: Tone };
 type Dialog = Notice & { buttons: FeedbackButton[]; key?: string };
@@ -86,9 +87,25 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
-  const api = useMemo(() => ({ show }), [show]);
+  const dismiss = useCallback((key: string) => {
+    const previousFirstId = pending.current[0]?.id;
+    const next = pending.current.filter((item) => item.key !== key);
+    if (next.length === pending.current.length) return;
+    pending.current = next;
+    if (!next.length) {
+      modalShown.current = false;
+      focusedDialog.current = null;
+    } else if (next[0]?.id !== previousFirstId) {
+      focusedDialog.current = null;
+    }
+    setDialogs(next);
+  }, []);
+  const api = useMemo(() => ({ show, dismiss }), [show, dismiss]);
   const dialog = dialogs[0];
   const dialogOpen = Boolean(dialog);
+  const draftDialog = Boolean(
+    dialog && /مسودة|إلغاء التغييرات/.test(dialog.title),
+  );
   const focusDialog = () => {
     if (!dialog || !modalShown.current || focusedDialog.current === dialog.id)
       return;
@@ -240,14 +257,21 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
                 accessibilityViewIsModal
                 onAccessibilityEscape={cancel}
               >
-                <View style={styles.dialogSymbol}>
+                <View
+                  style={[
+                    styles.dialogSymbol,
+                    draftDialog && styles.draftSymbol,
+                  ]}
+                >
                   <MaterialCommunityIcons
                     name={
-                      dialog.buttons.some(
-                        (button) => button.style === 'destructive',
-                      )
-                        ? 'alert-circle-outline'
-                        : 'help-circle-outline'
+                      draftDialog
+                        ? 'file-document-edit-outline'
+                        : dialog.buttons.some(
+                              (button) => button.style === 'destructive',
+                            )
+                          ? 'alert-circle-outline'
+                          : 'help-circle-outline'
                     }
                     size={30}
                     color={colors.primaryDark}
@@ -259,11 +283,18 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
                   onLayout={focusDialog}
                   accessible
                   accessibilityRole="header"
-                  style={styles.dialogTitle}
+                  style={[
+                    styles.dialogTitle,
+                    draftDialog && styles.centeredCopy,
+                  ]}
                 >
                   {dialog.title}
                 </Text>
-                <Text style={styles.message}>{dialog.message}</Text>
+                <Text
+                  style={[styles.message, draftDialog && styles.centeredCopy]}
+                >
+                  {dialog.message}
+                </Text>
                 <View style={styles.actions}>
                   {dialog.buttons.map((button, index) => (
                     <MotionPressable
@@ -362,8 +393,18 @@ const createStyles = (colors: ThemeColors) =>
       alignSelf: 'center',
       padding: spacing.lg,
       gap: spacing.md,
-      borderRadius: 24,
-      backgroundColor: colors.elevatedSurface,
+      borderRadius: 32,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    centeredCopy: { textAlign: 'center' },
+    draftSymbol: {
+      width: 88,
+      height: 88,
+      borderRadius: 44,
+      alignSelf: 'center',
+      backgroundColor: colors.surfaceContainer,
     },
     dialogSymbol: {
       width: 56,

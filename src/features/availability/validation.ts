@@ -1,4 +1,3 @@
-import { coverageOptions } from './coverage';
 import type { Availability, DayKey } from './types';
 export const dayKeys: DayKey[] = [
   'sat',
@@ -89,29 +88,12 @@ export function validateWeeklyHours(value: unknown): string | undefined {
     return invalid;
 }
 export function validateAvailability(value: Availability, requireMode = false) {
-  const errors: Partial<
-    Record<'serviceMode' | 'coverageAreas' | 'weeklyHours', string>
-  > = {};
+  const errors: Partial<Record<'serviceMode' | 'weeklyHours', string>> = {};
   if (
     (requireMode || value.serviceMode !== undefined) &&
     !['fixed', 'mobile', 'both'].includes(value.serviceMode ?? '')
   )
     errors.serviceMode = 'اختار طريقة تقديم الخدمة.';
-  const coverage = value.coverageAreas;
-  if (
-    coverage !== undefined &&
-    (!Array.isArray(coverage) ||
-      coverage.some(
-        (area) =>
-          area !== 'all' &&
-          !coverageOptions.includes(area as (typeof coverageOptions)[number]),
-      ) ||
-      new Set(coverage).size !== coverage.length ||
-      (coverage.includes('all') && coverage.length !== 1))
-  )
-    errors.coverageAreas = 'اختار مناطق التغطية من القائمة.';
-  if (['mobile', 'both'].includes(value.serviceMode ?? '') && !coverage?.length)
-    errors.coverageAreas = 'اختار منطقة تغطية واحدة على الأقل.';
   const hoursError = validateWeeklyHours(value.weeklyHours);
   if (hoursError) errors.weeklyHours = hoursError;
   return errors;

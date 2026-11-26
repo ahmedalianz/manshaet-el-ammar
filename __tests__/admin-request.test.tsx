@@ -79,7 +79,7 @@ describe('admin request review UI', () => {
       </FeedbackProvider>,
     );
     expect(screen.getByText('التغييرات المقترحة فقط')).toBeTruthy();
-    expect(screen.getByText('رقم الموبايل')).toBeTruthy();
+    expect(screen.getByText('رقم التواصل')).toBeTruthy();
     expect(screen.getByText('العنوان')).toBeTruthy();
     expect(screen.queryByText('الاسم المعروض')).toBeNull();
     expect(screen.getAllByText('البيانات الحالية')).toHaveLength(2);
@@ -98,7 +98,7 @@ describe('admin request review UI', () => {
     expect(screen.queryByText('الاسم المعروض')).toBeNull();
     await fireEvent.press(toggle);
     expect(screen.getByText('الاسم المعروض')).toBeTruthy();
-    expect(screen.getAllByText('رقم الموبايل')).toHaveLength(1);
+    expect(screen.getAllByText('رقم التواصل')).toHaveLength(1);
     await fireEvent.press(toggle);
     expect(screen.queryByText('الاسم المعروض')).toBeNull();
   });

@@ -118,12 +118,12 @@ describe('local moderation lifecycle', () => {
     apply(admin, {
       type: 'reject',
       requestId: 'request-changes',
-      reason: 'راجع رقم الموبايل',
+      reason: 'راجع رقم التواصل',
     });
     expect(publicService('owned-changes')).toEqual(before);
     expect(ownerService('owned-changes')).toMatchObject({
       status: 'approved',
-      editRejectionReason: 'راجع رقم الموبايل',
+      editRejectionReason: 'راجع رقم التواصل',
     });
     expect(ownerService('owned-changes')?.pendingChanges).toBeUndefined();
   });

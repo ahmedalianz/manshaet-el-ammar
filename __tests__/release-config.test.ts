@@ -22,9 +22,17 @@ describe('Android store configuration guardrails', () => {
     expect(eas.build.production.android.buildType).toBe('app-bundle');
     expect(eas.build.production.distribution).toBe('store');
     expect(eas.build.production.android.credentialsSource).toBe('remote');
+    expect(eas.build.production.channel).toBe('production');
+    expect(app.runtimeVersion).toEqual({ policy: 'fingerprint' });
+    expect(app.updates?.url).toBe(
+      `https://u.expo.dev/${app.extra.eas.projectId}`,
+    );
     const ignore = readFileSync(resolve('.easignore'), 'utf8');
     expect(ignore).toMatch(/^\/android$/m);
     expect(ignore).toMatch(/^\/ios$/m);
+    expect(ignore).toMatch(/^\/backend$/m);
+    expect(ignore).toMatch(/^\.dev\.vars$/m);
+    expect(ignore).toMatch(/^credentials\.json$/m);
     expect(app.android.allowBackup).toBe(false);
     expect(app.android.predictiveBackGestureEnabled).toBe(false);
     expect(app.android.blockedPermissions).toEqual(

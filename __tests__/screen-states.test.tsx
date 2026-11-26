@@ -84,6 +84,7 @@ it('combines Discover search with a group filter and clears each level', async (
   await render(<Explore />);
   await fireEvent.press(screen.getByRole('button', { name: 'تصفية الأقسام' }));
   await fireEvent.press(screen.getByRole('button', { name: 'صحة وطب' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'عرض النتائج' }));
   await fireEvent.changeText(
     screen.getByLabelText('ابحث عن خدمة أو مقدم خدمة...'),
     'سباك',

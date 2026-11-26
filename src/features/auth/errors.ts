@@ -46,6 +46,14 @@ export function authErrorMessage(error: unknown): string {
     case 'unauthenticated':
     case 'auth/requires-recent-login':
       return 'لحماية حسابك، سجّل الدخول من جديد قبل العملية دي.';
+    case 'auth/user-mismatch':
+      return 'الحساب اللي اخترته مش نفس حسابك الحالي. اختار نفس الحساب المسجل بيه وجرّب تاني.';
+    case 'account/delete-unavailable':
+      return 'حذف الحساب غير متاح حاليًا. جرّب تاني بعد شوية.';
+    case 'account/admin-cannot-delete':
+      return 'مينفعش تحذف حساب المشرف من التطبيق. اسحب صلاحية المشرف الأول.';
+    case 'account/delete-incomplete':
+      return 'مقدرناش نكمّل حذف كل البيانات في محاولة واحدة. جرّب تاني عشان تكمّل الحذف.';
     case 'auth/user-token-expired':
       return 'محتاج تسجّل دخولك تاني عشان تكمّل.';
     case 'already-exists':

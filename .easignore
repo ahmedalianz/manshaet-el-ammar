@@ -49,6 +49,15 @@ ui-debug.log*
 .env.*
 !.env.example
 
+# Release signing credentials, local migrations, and photo worker secrets/code
+credentials.json
+service-account*.json
+.local-migrations/
+/backend
+.dev.vars
+.dev.vars.*
+.wrangler/
+
 # Always regenerate native projects from app.json for cloud store builds.
 /android
 /ios

@@ -1,4 +1,11 @@
+import { pickServiceContact } from './importContact';
+import { File } from 'expo-file-system';
+import Svg, { Path } from 'react-native-svg';
+import { deleteDraftPhoto } from '../photos/draftFiles';
+import { PhotoField } from '../photos/PhotoField';
+import { photoRequest, uploadPhoto, type PhotoDraft } from '../photos/api';
 import type { Availability } from '../availability/types';
+import { AddServiceArtwork } from './AddServiceArtwork';
 import { ServiceReview } from './ServiceReview';
 import { CategorySelectionSheet } from './CategorySelectionSheet';
 import { ProviderAction } from './ProviderPage';
@@ -9,10 +16,9 @@ import {
   saveDraft,
   discardDraft,
   draftEpoch,
+  type ServiceDraft,
 } from '../local/drafts';
 import { AvailabilityFields } from '../availability/AvailabilityFields';
-import { SERVICE_LIMIT_MESSAGE } from './serviceLimit';
-import { useSupportActions } from '../support/useSupportActions';
 import { useFeedback } from '../../components/ui/Feedback';
 import {
   MotionPressable as Pressable,
@@ -31,6 +37,7 @@ import {
   AppState,
   ActivityIndicator,
   BackHandler,
+  Image,
   KeyboardAvoidingView,
   I18nManager,
   Platform,
@@ -40,6 +47,7 @@ import {
   TextInput,
   Keyboard,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { spacing } from '../../theme/spacing';
@@ -47,12 +55,14 @@ import type { ThemeColors } from '../../theme/colors';
 import { useAppTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import { typography } from '../../theme/typography';
 import { CategoryIcon } from '../discovery/components/DiscoveryUi';
+import { categoryImages } from '../discovery/data/categoryImages';
 import { useProviderState } from './ProviderContext';
 import type { ProviderListing, ServiceValues } from './types';
 import { FormField } from './FormField';
 import { serviceExamples } from './serviceExamples';
 import {
   normalizeMobile,
+  validateMobile,
   validateService,
   type FormErrors,
 } from './validation';
@@ -84,30 +94,75 @@ function listingValues(
 
     address: source.address,
     serviceMode: source.serviceMode,
-    coverageAreas: source.coverageAreas,
     weeklyHours: source.weeklyHours,
   };
+}
+function comparableServiceValues(
+  values: ServiceValues,
+  sameNumber: boolean,
+): ServiceValues {
+  const rawWhatsapp =
+    sameNumber && !validateMobile(values.phone)
+      ? values.phone
+      : (values.whatsapp ?? '');
+  return {
+    name: values.name.trim(),
+    categoryId: values.categoryId.trim(),
+    serviceTitle: values.serviceTitle.trim(),
+    description: values.description.trim(),
+    phone: values.phone.trim() ? normalizeMobile(values.phone.trim()) : '',
+    whatsapp: rawWhatsapp.trim() ? normalizeMobile(rawWhatsapp.trim()) : '',
+    address: values.address.trim(),
+    serviceMode: values.serviceMode,
+    weeklyHours: values.weeklyHours,
+  };
+}
+function hasDraftChanges(
+  base: ServiceValues,
+  baseSameNumber: boolean,
+  candidate: ServiceValues,
+  candidateSameNumber: boolean,
+  candidatePhoto?: PhotoDraft,
+): boolean {
+  if (candidatePhoto && candidatePhoto.action !== 'keep') return true;
+  return (
+    changedFields(
+      comparableServiceValues(base, baseSameNumber),
+      comparableServiceValues(candidate, candidateSameNumber),
+    ).length > 0
+  );
 }
 export function ServiceForm({
   listing,
   proposal = false,
   draftProviderId,
   offlineDraftOnly = false,
+  autoRestoreDraft = false,
   onRefreshDraft,
+  adminDirect = false,
+  hasPendingRequest = false,
+  onAdminComplete,
 }: {
   listing?: ProviderListing;
   proposal?: boolean;
   draftProviderId?: string;
   offlineDraftOnly?: boolean;
+  autoRestoreDraft?: boolean;
   onRefreshDraft?: () => void;
+  adminDirect?: boolean;
+  hasPendingRequest?: boolean;
+  onAdminComplete?: (providerId: string) => void;
 }) {
   const styles = useThemedStyles(createStyles);
-  const { colors } = useAppTheme();
+  const { colors, resolved } = useAppTheme();
+  const isDark = resolved === 'dark';
+  const { width, fontScale } = useWindowDimensions();
+  const compactBanner = width / fontScale < 280;
   const feedback = useFeedback();
-  const support = useSupportActions();
   const {
     userId,
     submit,
+    saveAdminService,
     categories: remoteCategories,
     allocateSubmissionId,
   } = useProviderState();
@@ -115,6 +170,9 @@ export function ServiceForm({
   const submissionId = useRef<string | undefined>(undefined);
   const [initial] = useState(() => listingValues(listing, proposal));
   const [values, setValues] = useState(initial);
+  const [photoDraft, setPhotoDraft] = useState<PhotoDraft>({ action: 'keep' });
+  const [photoProgress, setPhotoProgress] = useState<number>();
+  const photoAbort = useRef<AbortController | null>(null);
   const [step, setStep] = useState<1 | 2>(1);
   const [hoursPending, setHoursPending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -124,13 +182,16 @@ export function ServiceForm({
     Partial<Record<keyof ServiceValues, ComponentRef<typeof TextInput> | null>>
   >({});
   const fieldY = useRef<Partial<Record<keyof ServiceValues, number>>>({});
+  const step1PanelY = useRef(0);
   const focusRequested = useRef(false);
-  const [sameNumber, setSameNumber] = useState(
+  const [initialSameNumber] = useState(() =>
     Boolean(
       initial.whatsapp &&
       normalizeMobile(initial.whatsapp) === normalizeMobile(initial.phone),
     ),
   );
+  const [sameNumber, setSameNumber] = useState(initialSameNumber);
+  const canUseSameNumber = !validateMobile(values.phone);
   const [consent, setConsent] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [busy, setBusy] = useState(false);
@@ -141,14 +202,7 @@ export function ServiceForm({
     const order: (keyof ServiceValues)[] =
       step === 1
         ? ['name', 'categoryId', 'serviceTitle']
-        : [
-            'phone',
-            'whatsapp',
-            'serviceMode',
-            'coverageAreas',
-            'address',
-            'weeklyHours',
-          ];
+        : ['phone', 'whatsapp', 'serviceMode', 'address', 'weeklyHours'];
     if (errors.consent && reviewing) {
       requestAnimationFrame(() =>
         scrollRef.current?.scrollToEnd({ animated: true }),
@@ -167,49 +221,85 @@ export function ServiceForm({
       });
   }, [errors, step, reviewing]);
   const [submitError, setSubmitError] = useState('');
+  const [photoSubmitFailed, setPhotoSubmitFailed] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const completedRef = useRef(false);
   const submitting = useRef(false);
   const draftKey = listing?.id ?? draftProviderId ?? 'new';
   const baseRevision = useRef(listing?.updatedAt);
+  const listingRef = useRef(listing);
+  const initialRef = useRef(initial);
+  const feedbackRef = useRef(feedback);
+  useEffect(() => {
+    listingRef.current = listing;
+    feedbackRef.current = feedback;
+  }, [listing, feedback]);
   const [draftStatus, setDraftStatus] = useState('');
   const [draftStorageError, setDraftStorageError] = useState('');
   const mounted = useRef(true);
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftEnabled = useRef(false);
+  const draftCleared = useRef(false);
+  const hadSavedDraft = useRef(false);
+  const checkedDraftKey = useRef<string | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      photoAbort.current?.abort();
+      if (autosaveTimer.current) {
+        clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = null;
+      }
+      feedbackRef.current.dismiss?.('restore-service-draft');
+      feedbackRef.current.dismiss?.('discard-service-changes');
     };
   }, []);
-  const draftEnabled = useRef(false);
-  const draftCleared = useRef(false);
   const epoch = useRef(userId ? draftEpoch(userId) : 0);
-  const draftSnapshot = useRef({ values, step, sameNumber });
+  const draftSnapshot = useRef({ values, step, sameNumber, photoDraft });
   useEffect(() => {
-    draftSnapshot.current = { values, step, sameNumber };
-  }, [values, step, sameNumber]);
+    draftSnapshot.current = { values, step, sameNumber, photoDraft };
+  }, [values, step, sameNumber, photoDraft]);
   const flushDraft = useCallback(() => {
     if (
       !userId ||
       !draftEnabled.current ||
       draftCleared.current ||
-      (JSON.stringify(draftSnapshot.current.values) ===
-        JSON.stringify(initial) &&
-        draftSnapshot.current.step === 1 &&
-        !draftSnapshot.current.sameNumber)
+      submitting.current ||
+      completedRef.current
     )
       return Promise.resolve();
+    const meaningful = hasDraftChanges(
+      initial,
+      initialSameNumber,
+      draftSnapshot.current.values,
+      draftSnapshot.current.sameNumber,
+      draftSnapshot.current.photoDraft,
+    );
+    if (!meaningful) {
+      if (hadSavedDraft.current) {
+        hadSavedDraft.current = false;
+        return discardDraft(userId, draftKey)
+          .then(() => {
+            if (mounted.current) setDraftStatus('');
+          })
+          .catch(() => {});
+      }
+      return Promise.resolve();
+    }
     const writingVersion = JSON.stringify(draftSnapshot.current);
     return saveDraft(
       userId,
       draftKey,
       {
         ...draftSnapshot.current,
-        baseRevision: listing?.updatedAt ?? baseRevision.current,
+        baseRevision: listingRef.current?.updatedAt ?? baseRevision.current,
         savedAt: new Date().toISOString(),
       },
       epoch.current,
     )
       .then(() => {
+        hadSavedDraft.current = true;
         if (
           mounted.current &&
           epoch.current === draftEpoch(userId) &&
@@ -226,11 +316,17 @@ export function ServiceForm({
           );
         throw error;
       });
-  }, [userId, draftKey, listing?.updatedAt, initial]);
+  }, [userId, draftKey, initial, initialSameNumber]);
   const clearDraft = async () => {
+    if (autosaveTimer.current) {
+      clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = null;
+    }
     draftCleared.current = true;
+    hadSavedDraft.current = false;
     try {
       if (userId) await discardDraft(userId, draftKey);
+      deleteDraftPhoto(photoDraft.localUri);
       if (mounted.current) setDraftStatus('');
     } catch (error) {
       draftCleared.current = false;
@@ -242,26 +338,89 @@ export function ServiceForm({
 
   useEffect(() => {
     let active = true;
-    if (!userId) return;
+    const sessionKey = userId ? `${userId}:${draftKey}` : null;
+    if (!userId || !sessionKey || checkedDraftKey.current === sessionKey)
+      return;
+    checkedDraftKey.current = sessionKey;
+    const restoreLoadedDraft = (draft: ServiceDraft) => {
+      setValues(draft.values);
+      let restoredPhoto: PhotoDraft = draft.photoDraft ?? {
+        action: 'keep',
+      };
+      if (
+        restoredPhoto.action === 'replace' &&
+        restoredPhoto.localUri &&
+        Platform.OS !== 'web'
+      ) {
+        try {
+          if (!new File(restoredPhoto.localUri).exists) {
+            restoredPhoto = { action: 'keep' };
+            setDraftStorageError(
+              'ملف الصورة المحفوظ في المسودة مبقاش موجود. اختار الصورة تاني لو حابب.',
+            );
+          }
+        } catch {
+          restoredPhoto = { action: 'keep' };
+        }
+      }
+      setPhotoDraft(restoredPhoto);
+      submissionId.current = restoredPhoto.submissionId;
+      setStep(draft.step);
+      setSameNumber(draft.sameNumber);
+      setConsent(false);
+      draftEnabled.current = true;
+    };
     void readDraft(userId, draftKey)
       .then((draft) => {
-        if (!active) return;
+        if (
+          !active ||
+          !mounted.current ||
+          submitting.current ||
+          draftCleared.current ||
+          completedRef.current
+        )
+          return;
         if (!draft) {
           draftEnabled.current = true;
           return;
         }
+        if (
+          !hasDraftChanges(
+            initialRef.current,
+            initialSameNumber,
+            draft.values,
+            draft.sameNumber,
+            draft.photoDraft,
+          )
+        ) {
+          void discardDraft(userId, draftKey).catch(() => {});
+          draftEnabled.current = true;
+          return;
+        }
+        hadSavedDraft.current = true;
         baseRevision.current = draft.baseRevision;
+        const currentListing = listingRef.current;
         const stale = Boolean(
-          listing && draft.baseRevision !== listing.updatedAt,
+          currentListing && draft.baseRevision !== currentListing.updatedAt,
         );
-        feedback.show(
+        if (autoRestoreDraft && !stale) {
+          restoreLoadedDraft(draft);
+          return;
+        }
+        feedbackRef.current.show(
           stale ? 'الخدمة اتحدثت بعد المسودة' : 'نكمل المسودة؟',
           stale
             ? 'البيانات المنشورة اتغيرت. راجع الفرق قبل استعادة المسودة:\n' +
-                changedFields(initial, draft.values)
+                changedFields(
+                  comparableServiceValues(
+                    initialRef.current,
+                    initialSameNumber,
+                  ),
+                  comparableServiceValues(draft.values, draft.sameNumber),
+                )
                   .map(
                     (key) =>
-                      `${fieldLabels[key]} — الحالي: ${fieldValue(initial, key)} / المسودة: ${fieldValue(draft.values, key)}`,
+                      `${fieldLabels[key]} — الحالي: ${fieldValue(initialRef.current, key)} / المسودة: ${fieldValue(draft.values, key)}`,
                   )
                   .join('\n')
             : 'في بيانات محفوظة على الجهاز تقدر تكملها.',
@@ -270,6 +429,7 @@ export function ServiceForm({
               text: 'حذف المسودة',
               style: 'destructive',
               onPress: () => {
+                hadSavedDraft.current = false;
                 void discardDraft(userId, draftKey).catch(() =>
                   setDraftStorageError('مش قادرين نمسح المسودة. جرّب تاني.'),
                 );
@@ -278,13 +438,7 @@ export function ServiceForm({
             },
             {
               text: 'استعادة المسودة',
-              onPress: () => {
-                setValues(draft.values);
-                setStep(draft.step);
-                setSameNumber(draft.sameNumber);
-                setConsent(false);
-                draftEnabled.current = true;
-              },
+              onPress: () => restoreLoadedDraft(draft),
             },
           ],
           { key: 'restore-service-draft' },
@@ -297,19 +451,42 @@ export function ServiceForm({
     return () => {
       active = false;
     };
-  }, [userId, draftKey, listing, initial, feedback]);
+  }, [userId, draftKey, initialSameNumber, autoRestoreDraft]);
   useEffect(() => {
     if (
       draftEnabled.current &&
       !draftCleared.current &&
-      JSON.stringify(values) !== JSON.stringify(initial)
+      !submitting.current &&
+      !completedRef.current &&
+      hasDraftChanges(
+        initial,
+        initialSameNumber,
+        values,
+        sameNumber,
+        photoDraft,
+      )
     )
       setDraftStatus('بنحفظ المسودة...');
-    const timer = setTimeout(() => {
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      autosaveTimer.current = null;
       void flushDraft().catch(() => {});
     }, 750);
-    return () => clearTimeout(timer);
-  }, [values, step, sameNumber, flushDraft, initial]);
+    return () => {
+      if (autosaveTimer.current) {
+        clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = null;
+      }
+    };
+  }, [
+    values,
+    step,
+    sameNumber,
+    photoDraft,
+    flushDraft,
+    initial,
+    initialSameNumber,
+  ]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state !== 'active') void flushDraft().catch(() => {});
@@ -321,13 +498,13 @@ export function ServiceForm({
   }, [flushDraft]);
 
   const dirty =
-    JSON.stringify(values) !== JSON.stringify(initial) ||
-    consent ||
-    sameNumber !==
-      Boolean(
-        initial.whatsapp &&
-        normalizeMobile(initial.whatsapp) === normalizeMobile(initial.phone),
-      );
+    hasDraftChanges(
+      initial,
+      initialSameNumber,
+      values,
+      sameNumber,
+      photoDraft,
+    ) || consent;
   const disablePrevention = usePreventRemove(
     (dirty || step === 2 || reviewing) && !completed,
     ({ repeat }) => {
@@ -375,21 +552,69 @@ export function ServiceForm({
       );
     },
   );
+  const importing = useRef(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const importContact = async () => {
+    if (importing.current) return;
+    importing.current = true;
+    setImportBusy(true);
+    try {
+      const contact = await pickServiceContact();
+      if (!contact) return;
+      const apply = (phone: string) => {
+        const name = contact.name || values.name;
+        const save = () => {
+          setValues((current) => ({ ...current, name, phone }));
+          setErrors((current) => ({
+            ...current,
+            name: undefined,
+            phone: undefined,
+          }));
+        };
+        if (
+          (values.name && values.name !== name) ||
+          (values.phone && normalizeMobile(values.phone) !== phone)
+        ) {
+          feedback.show('استبدال بيانات التواصل؟', name + '\n' + phone, [
+            { text: 'رجوع', style: 'cancel' },
+            { text: 'استبدال', onPress: save },
+          ]);
+        } else save();
+      };
+      if (contact.phones.length === 1) apply(contact.phones[0]);
+      else
+        feedback.show('اختار رقم التواصل', contact.name, [
+          ...contact.phones.map((phone) => ({
+            text: phone,
+            onPress: () => apply(phone),
+          })),
+          { text: 'رجوع', style: 'cancel' },
+        ]);
+    } catch (error) {
+      feedback.show(
+        'تعذر استيراد جهة الاتصال',
+        error instanceof Error
+          ? error.message
+          : 'جرّب تاني أو اكتب البيانات يدويًا.',
+      );
+    } finally {
+      importing.current = false;
+      setImportBusy(false);
+    }
+  };
   const update = (field: keyof ServiceValues, value: string) => {
     setValues((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined }));
   };
   const effectiveValues = {
     ...values,
-    // Coverage selection is no longer collected. Retain stored areas; new
-    // visiting services use the existing village-wide backend value.
-    ...((values.serviceMode === 'mobile' || values.serviceMode === 'both') &&
-    !values.coverageAreas?.length
-      ? { coverageAreas: ['all'] }
-      : {}),
-    whatsapp: sameNumber ? values.phone : values.whatsapp,
+    whatsapp:
+      sameNumber && !validateMobile(values.phone)
+        ? values.phone
+        : values.whatsapp,
   };
-  const send = async () => {
+  const send = async (overridePhoto?: PhotoDraft) => {
+    const activePhoto = overridePhoto ?? photoDraft;
     if (offlineDraftOnly) {
       setSubmitError(
         'المسودة محفوظة للتعديل بس. حدّث بيانات حسابك بعد رجوع الإنترنت قبل الإرسال.',
@@ -397,9 +622,15 @@ export function ServiceForm({
       return;
     }
     if (submitting.current) return;
+    if (autosaveTimer.current) {
+      clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = null;
+    }
+    feedback.dismiss?.('restore-service-draft');
     submitting.current = true;
     setBusy(true);
     setSubmitError('');
+    setPhotoSubmitFailed(false);
     try {
       const normalized = Object.fromEntries(
         Object.entries(effectiveValues).map(([key, value]) => [
@@ -412,32 +643,236 @@ export function ServiceForm({
         ? normalizeMobile(normalized.whatsapp)
         : undefined;
       submissionId.current ??= allocateSubmissionId?.();
-      const providerId = await submit(
-        normalized,
-        listing?.id ?? draftProviderId,
-        false,
-        consent,
-        submissionId.current,
-      );
+      const stageReplacementPhoto = async (
+        reusableCandidateId?: string,
+      ): Promise<string> => {
+        if (!activePhoto.localUri || !submissionId.current) {
+          setPhotoDraft({ action: 'keep' });
+          throw new Error('اختار الصورة تاني قبل الإرسال.');
+        }
+        if (Platform.OS !== 'web' && !new File(activePhoto.localUri).exists) {
+          setPhotoDraft({ action: 'keep' });
+          throw new Error(
+            'ملف الصورة مبقاش موجود على الجهاز. اختار الصورة تاني قبل الإرسال.',
+          );
+        }
+        if (reusableCandidateId) return reusableCandidateId;
+        const serviceId =
+          listing?.id ?? draftProviderId ?? `provider-${submissionId.current}`;
+        const reserved = await photoRequest<{ candidateId: string }>(
+          '/v1/photos/reservations',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              serviceId,
+              submissionId: submissionId.current,
+              expectedPhotoVersion: listing?.placePhoto?.version ?? null,
+            }),
+          },
+        );
+        const candidateId = reserved.candidateId;
+        setPhotoDraft((current) => ({
+          ...current,
+          candidateId,
+          submissionId: submissionId.current,
+          uploaded: false,
+          needsCleanup: false,
+        }));
+        const controller = new AbortController();
+        photoAbort.current = controller;
+        setPhotoProgress(0);
+        try {
+          await uploadPhoto(
+            candidateId,
+            activePhoto.localUri,
+            setPhotoProgress,
+            controller.signal,
+          );
+          setPhotoDraft((current) => ({
+            ...current,
+            candidateId,
+            submissionId: submissionId.current,
+            uploaded: true,
+            needsCleanup: false,
+          }));
+          return candidateId;
+        } catch (cause) {
+          try {
+            await photoRequest(
+              `/v1/photos/candidates/${encodeURIComponent(candidateId)}`,
+              { method: 'DELETE' },
+            );
+            setPhotoDraft((current) => ({
+              ...current,
+              candidateId: undefined,
+              uploaded: false,
+              needsCleanup: false,
+            }));
+          } catch (cleanupErr) {
+            const msg = cleanupErr instanceof Error ? cleanupErr.message : '';
+            if (/مبقتش متاحة|اتغيّرت/.test(msg)) {
+              setPhotoDraft((current) => ({
+                ...current,
+                candidateId: undefined,
+                uploaded: false,
+                needsCleanup: false,
+              }));
+            } else {
+              setPhotoDraft((current) => ({
+                ...current,
+                candidateId,
+                needsCleanup: true,
+                uploaded: false,
+              }));
+            }
+          }
+          throw cause;
+        } finally {
+          photoAbort.current = null;
+          setPhotoProgress(undefined);
+        }
+      };
+
+      let reusedUploadedCandidate = false;
+      if (activePhoto.action === 'replace') {
+        try {
+          const canReuse = Boolean(
+            activePhoto.candidateId &&
+            activePhoto.uploaded &&
+            !activePhoto.needsCleanup &&
+            activePhoto.submissionId === submissionId.current,
+          );
+          if (activePhoto.candidateId && !canReuse) {
+            await photoRequest(
+              `/v1/photos/candidates/${encodeURIComponent(activePhoto.candidateId)}`,
+              { method: 'DELETE' },
+            ).catch(() => {});
+            setPhotoDraft((current) => ({
+              ...current,
+              candidateId: undefined,
+              uploaded: false,
+              needsCleanup: false,
+            }));
+          }
+          reusedUploadedCandidate = canReuse;
+          const candidateId = await stageReplacementPhoto(
+            canReuse ? activePhoto.candidateId : undefined,
+          );
+          normalized.photoChange = {
+            action: 'replace',
+            candidateId,
+            ...(adminDirect
+              ? { expectedPhotoVersion: listing?.placePhoto?.version ?? null }
+              : {}),
+          };
+        } catch (photoError) {
+          setPhotoSubmitFailed(true);
+          throw photoError;
+        }
+      } else if (activePhoto.action === 'remove')
+        normalized.photoChange = {
+          action: 'remove',
+          expectedPhotoVersion: listing?.placePhoto?.version ?? null,
+        };
+
+      const commitSubmission = async () => {
+        if (adminDirect) {
+          if (!saveAdminService)
+            throw new Error('الخطوة دي متاحة لمشرف الدليل بس.');
+          return saveAdminService(
+            normalized,
+            listing?.id ?? draftProviderId,
+            submissionId.current,
+          );
+        }
+        return submit(
+          normalized,
+          listing?.id ?? draftProviderId,
+          false,
+          consent,
+          submissionId.current,
+        );
+      };
+
+      let providerId: string;
+      try {
+        providerId = await commitSubmission();
+      } catch (commitError) {
+        const msg = commitError instanceof Error ? commitError.message : '';
+        if (
+          activePhoto.action === 'replace' &&
+          reusedUploadedCandidate &&
+          /مبقتش متاحة|حالة الصورة اتغيّرت|غير متاح|صلاحيات|permission/i.test(
+            msg,
+          )
+        ) {
+          if (normalized.photoChange?.candidateId) {
+            await photoRequest(
+              `/v1/photos/candidates/${encodeURIComponent(normalized.photoChange.candidateId)}`,
+              { method: 'DELETE' },
+            ).catch(() => {});
+          }
+          try {
+            const freshCandidateId = await stageReplacementPhoto(undefined);
+            normalized.photoChange = {
+              action: 'replace',
+              candidateId: freshCandidateId,
+              ...(adminDirect
+                ? { expectedPhotoVersion: listing?.placePhoto?.version ?? null }
+                : {}),
+            };
+          } catch (reuploadError) {
+            setPhotoSubmitFailed(true);
+            throw reuploadError;
+          }
+          providerId = await commitSubmission();
+        } else {
+          if (activePhoto.action === 'replace' && adminDirect) {
+            setPhotoSubmitFailed(true);
+          }
+          throw commitError;
+        }
+      }
       try {
         await clearDraft();
       } catch {
         feedback.show(
-          'طلبك اتبعت',
-          'بس مش قادرين نمسح المسودة من الجهاز. امسحها من مسودات الخدمات لما التخزين يشتغل.',
+          adminDirect ? 'تم حفظ الخدمة' : 'طلبك اتبعت',
+          'بس مش قادرين نمسح المسودة من الجهاز دلوقتي.',
         );
       }
+      completedRef.current = true;
+      draftCleared.current = true;
       setCompleted(true);
       disablePrevention();
-      // Deferring navigation lets the unsaved-changes guard observe completion.
-      setTimeout(
-        () =>
-          router.replace({
-            pathname: '/provider/success',
-            params: { providerId },
-          }),
-        0,
-      );
+      if (adminDirect) {
+        const isEditing = Boolean(listing || draftProviderId);
+        feedback.show(
+          isEditing ? 'تم حفظ التعديلات' : 'تم نشر الخدمة',
+          isEditing
+            ? 'بيانات الخدمة اتحدثت مباشرة.'
+            : 'الخدمة بقت ظاهرة دلوقتي في الدليل العام.',
+        );
+        // Deferring navigation lets the unsaved-changes guard observe completion.
+        setTimeout(() => {
+          if (onAdminComplete) onAdminComplete(providerId);
+          else
+            router.replace({
+              pathname: '/admin/service/[id]',
+              params: { id: providerId },
+            });
+        }, 0);
+      } else {
+        // Deferring navigation lets the unsaved-changes guard observe completion.
+        setTimeout(
+          () =>
+            router.replace({
+              pathname: '/provider/success',
+              params: { providerId },
+            }),
+          0,
+        );
+      }
     } catch (error) {
       setSubmitError(
         error instanceof Error
@@ -449,6 +884,30 @@ export function ServiceForm({
       setBusy(false);
     }
   };
+  const continueWithoutPhoto = async () => {
+    if (busy || submitting.current) return;
+    setPhotoSubmitFailed(false);
+    setSubmitError('');
+    if (photoDraft.candidateId) {
+      await photoRequest(
+        `/v1/photos/candidates/${encodeURIComponent(photoDraft.candidateId)}`,
+        { method: 'DELETE' },
+      ).catch(() => {});
+    }
+    deleteDraftPhoto(photoDraft.localUri);
+    const nextPhoto: PhotoDraft = { action: 'keep' };
+    setPhotoDraft(nextPhoto);
+    if (
+      listing &&
+      listing.publicationStatus !== 'unpublished' &&
+      listing.status === 'approved' &&
+      changedFields(initial, effectiveValues).length === 0
+    ) {
+      setSubmitError('مفيش تعديلات نصية لإرسالها من غير الصورة.');
+      return;
+    }
+    if (reviewing && (consent || adminDirect)) await send(nextPhoto);
+  };
   const next = () => {
     if (step === 2 && !reviewing && hoursPending) {
       focusRequested.current = true;
@@ -458,13 +917,18 @@ export function ServiceForm({
       });
       return;
     }
-    const basicErrors = validateService(effectiveValues, 1, consent);
+    const effectiveConsent = adminDirect ? true : consent;
+    const basicErrors = validateService(effectiveValues, 1, effectiveConsent);
     const validation =
       step === 1
         ? basicErrors
         : {
             ...basicErrors,
-            ...validateService(effectiveValues, 2, reviewing ? consent : true),
+            ...validateService(
+              effectiveValues,
+              2,
+              reviewing ? effectiveConsent : true,
+            ),
           };
     focusRequested.current = true;
     setErrors(validation);
@@ -495,13 +959,22 @@ export function ServiceForm({
       setReturnToReview(false);
       return;
     }
-    if (listing?.pendingChanges)
+    if (!adminDirect && listing?.pendingChanges)
       feedback.show(
         'تحديث التعديلات المرسلة؟',
         'التعديلات دي هتحل محل الاقتراح السابق، والخدمة المنشورة هتفضل زي ما هي.',
         [
           { text: 'رجوع', style: 'cancel' },
           { text: 'تحديث وإرسال', onPress: () => void send() },
+        ],
+      );
+    else if (!adminDirect && listing?.photoReviewStatus === 'pending')
+      feedback.show(
+        'إرسال طلب جديد؟',
+        'في صورة قيد المراجعة حاليًا. إرسال طلب تعديل جديد هيلغي مراجعة الصورة الحالية وتحتاج ترفعها مع الطلب الجديد.',
+        [
+          { text: 'رجوع', style: 'cancel' },
+          { text: 'إرسال الطلب', onPress: () => void send() },
         ],
       );
     else void send();
@@ -546,12 +1019,42 @@ export function ServiceForm({
     setErrors((current) => ({
       ...current,
       serviceMode: undefined,
-      coverageAreas: undefined,
       weeklyHours: undefined,
     }));
   };
   const selectedCategory = categories.find(
     (category) => category.id === values.categoryId,
+  );
+  const selectedCategoryImage = selectedCategory
+    ? categoryImages[selectedCategory.id]
+    : undefined;
+  const selectedCategoryExample = selectedCategory
+    ? serviceExamples[selectedCategory.id]
+    : undefined;
+  const photoFieldNode = (
+    <PhotoField
+      value={photoDraft}
+      onChange={async (next) => {
+        setPhotoSubmitFailed(false);
+        setSubmitError('');
+        if (photoDraft.candidateId)
+          await photoRequest(
+            `/v1/photos/candidates/${encodeURIComponent(photoDraft.candidateId)}`,
+            { method: 'DELETE' },
+          ).catch(() => {});
+        if (photoDraft.localUri && photoDraft.localUri !== next.localUri)
+          deleteDraftPhoto(photoDraft.localUri);
+        submissionId.current ??= allocateSubmissionId?.();
+        setPhotoDraft({ ...next, submissionId: submissionId.current });
+      }}
+      approvedUrl={listing?.placePhoto?.detailUrl}
+      pendingPhotoReview={
+        !adminDirect && listing?.photoReviewStatus === 'pending'
+      }
+      disabled={busy || offlineDraftOnly}
+      progress={photoProgress}
+      onCancel={() => photoAbort.current?.abort()}
+    />
   );
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -567,15 +1070,17 @@ export function ServiceForm({
             name="arrow-right"
             size={24}
             color={colors.primaryDark}
+            accessibilityElementsHidden
           />
         </Pressable>
-        <Text style={styles.heading}>
+        <Text style={[styles.heading, styles.headerTitle]}>
           {reviewing
             ? 'مراجعة البيانات'
             : listing
               ? 'تعديل الخدمة'
               : 'إضافة خدمة'}
         </Text>
+        <View style={styles.headerSpacer} accessibilityElementsHidden />
       </View>
       <KeyboardAvoidingView
         style={styles.flex}
@@ -593,40 +1098,92 @@ export function ServiceForm({
             contentContainerStyle={styles.content}
           >
             {!reviewing ? (
-              <>
-                <View style={styles.stepHeading}>
-                  {([1, 2] as const).map((number) => (
-                    <View key={number} style={styles.stepItem}>
-                      <View
-                        style={[
-                          styles.stepCircle,
-                          number === step && {
-                            backgroundColor: colors.actionBackground,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.stepNumber,
-                            number === step && { color: colors.onPrimary },
-                          ]}
-                        >
-                          {number.toLocaleString('ar-EG')}
-                        </Text>
-                      </View>
+              <View style={styles.stepperCard}>
+                <View style={styles.stepRow}>
+                  <View style={styles.stepItem}>
+                    <View
+                      style={[
+                        styles.stepCircle,
+                        step === 1
+                          ? { backgroundColor: colors.actionBackground }
+                          : {
+                              backgroundColor: colors.publishedBackground,
+                              borderColor: colors.success,
+                              borderWidth: 1,
+                            },
+                      ]}
+                    >
                       <Text
-                        accessibilityRole={
-                          number === step ? 'header' : undefined
-                        }
                         style={[
-                          styles.stepLabel,
-                          number === step && { color: colors.primaryDark },
+                          styles.stepNumber,
+                          step === 1
+                            ? { color: colors.onPrimary }
+                            : { color: colors.success },
                         ]}
                       >
-                        {number === 1 ? 'بيانات الخدمة' : 'التواصل والمكان'}
+                        {(1).toLocaleString('ar-EG')}
                       </Text>
                     </View>
-                  ))}
+                    <View style={styles.stepLabelRow}>
+                      {step > 1 ? (
+                        <MaterialCommunityIcons
+                          name="check-circle"
+                          size={14}
+                          color={colors.success}
+                          accessibilityElementsHidden
+                        />
+                      ) : null}
+                      <Text
+                        accessibilityRole={step === 1 ? 'header' : undefined}
+                        style={[
+                          styles.stepLabel,
+                          step === 1
+                            ? { color: colors.primaryDark }
+                            : { color: colors.success },
+                        ]}
+                      >
+                        بيانات الخدمة
+                      </Text>
+                    </View>
+                  </View>
+                  <View
+                    accessibilityElementsHidden
+                    style={[
+                      styles.stepConnector,
+                      {
+                        backgroundColor:
+                          step === 2 ? colors.actionBackground : colors.border,
+                      },
+                    ]}
+                  />
+                  <View style={styles.stepItem}>
+                    <View
+                      style={[
+                        styles.stepCircle,
+                        step === 2 && {
+                          backgroundColor: colors.actionBackground,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.stepNumber,
+                          step === 2 && { color: colors.onPrimary },
+                        ]}
+                      >
+                        {(2).toLocaleString('ar-EG')}
+                      </Text>
+                    </View>
+                    <Text
+                      accessibilityRole={step === 2 ? 'header' : undefined}
+                      style={[
+                        styles.stepLabel,
+                        step === 2 && { color: colors.primaryDark },
+                      ]}
+                    >
+                      التواصل والمكان
+                    </Text>
+                  </View>
                 </View>
                 <View
                   accessible
@@ -646,7 +1203,7 @@ export function ServiceForm({
                     ]}
                   />
                 </View>
-              </>
+              </View>
             ) : null}
             {draftStatus ? (
               <Text accessibilityLiveRegion="polite" style={styles.hint}>
@@ -671,143 +1228,365 @@ export function ServiceForm({
                 الإرسال.
               </Text>
             ) : null}
+            {adminDirect && hasPendingRequest ? (
+              <Text style={styles.notice}>
+                تنبيه: في طلب تعديل معلّق للخدمة دي. حفظ التعديلات هنا هيحدّث
+                الخدمة مباشرة ويرفض الطلب المعلّق.
+              </Text>
+            ) : null}
             {listing?.publicationStatus === 'unpublished' ? (
               <Text style={styles.body}>
-                سبب إخفاء خدمتك:{' '}
-                {listing.unpublishReason ?? 'تواصل مع الدعم لمعرفة السبب.'} صحّح
-                البيانات وابعتها للمراجعة. الخدمة مش هترجع للدليل قبل الموافقة.
+                {adminDirect
+                  ? `الخدمة في الأرشيف ومخفية من الدليل${listing.unpublishReason ? ` (${listing.unpublishReason})` : ''}. حفظ التعديلات هنا هيحدّث بياناتها في الأرشيف مع الاحتفاظ بصاحبها الأصلي.`
+                  : `سبب إخفاء خدمتك: ${listing.unpublishReason ?? 'تواصل مع الدعم لمعرفة السبب.'} صحّح البيانات وابعتها للمراجعة. الخدمة مش هترجع للدليل قبل الموافقة.`}
               </Text>
             ) : null}
             {step === 1 && !reviewing ? (
-              <View style={styles.welcome}>
-                <View style={styles.sectionHeading}>
-                  <MaterialCommunityIcons
-                    name="handshake-outline"
-                    size={30}
-                    color={colors.primaryDark}
-                    accessibilityElementsHidden
-                  />
-                  <Text style={styles.label}>
-                    أهلًا بيك في دليل أهل منشأة العمار
-                  </Text>
+              <View
+                style={[
+                  styles.heroBanner,
+                  { backgroundColor: isDark ? '#203D50' : '#E4F0F8' },
+                ]}
+              >
+                <View
+                  pointerEvents="none"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                  style={StyleSheet.absoluteFill}
+                >
+                  <Svg
+                    width="100%"
+                    height="100%"
+                    viewBox="0 0 400 140"
+                    preserveAspectRatio="none"
+                    accessible={false}
+                  >
+                    <Path
+                      d="M0 100Q95 84 205 118T400 96V140H0Z"
+                      fill={isDark ? '#2F556D' : '#CBE0F0'}
+                      opacity={0.75}
+                    />
+                  </Svg>
                 </View>
-                <Text style={styles.hint}>
-                  عرّف أهل البلد بخدمتك وسهّل عليهم الوصول ليك والتواصل معاك.
-                </Text>
+                <View
+                  style={[styles.heroRow, compactBanner && styles.heroStacked]}
+                >
+                  <View style={styles.heroCopy}>
+                    <View
+                      pointerEvents="none"
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                      style={[
+                        styles.heroPill,
+                        { backgroundColor: colors.surface },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name="handshake-outline"
+                        size={16}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                      <Text style={styles.heroPillText}>
+                        خطوتين بس وتظهر لأهل البلد
+                      </Text>
+                    </View>
+                    <Text style={styles.heroTitle}>
+                      أهلًا بيك في دليل أهل منشأة العمار
+                    </Text>
+                    <Text style={styles.heroSubtitle}>
+                      عرّف أهل البلد بخدمتك وسهّل عليهم الوصول ليك والتواصل
+                      معاك.
+                    </Text>
+                  </View>
+                  <AddServiceArtwork variant="step1" style={styles.heroArt} />
+                </View>
               </View>
             ) : null}
-            {listing?.status === 'approved' &&
+            {adminDirect &&
+            listing &&
             listing.publicationStatus !== 'unpublished' ? (
+              <Text style={styles.notice}>
+                التعديلات هتتحفظ وتظهر مباشرة مع الاحتفاظ بصاحب الخدمة الأصلي.
+              </Text>
+            ) : !adminDirect &&
+              listing?.status === 'approved' &&
+              listing.publicationStatus !== 'unpublished' ? (
               <Text style={styles.notice}>
                 التعديلات الجديدة هتظهر بعد مراجعتها، وخدمتك الحالية هتفضل
                 منشورة.
               </Text>
             ) : null}
             {reviewing ? (
-              <ServiceReview
-                values={effectiveValues}
-                categoryName={selectedCategory?.name}
-                onEdit={(target) => {
-                  setReviewing(false);
-                  setReturnToReview(true);
-                  setConsent(false);
-                  setStep(target);
-                }}
-              />
+              <>
+                {photoProgress !== undefined ? photoFieldNode : null}
+                <ServiceReview
+                  values={effectiveValues}
+                  categoryName={selectedCategory?.name}
+                  categoryIcon={selectedCategory?.icon}
+                  photoDraft={photoDraft}
+                  hasApprovedPhoto={Boolean(listing?.placePhoto)}
+                  approvedPhotoUrl={listing?.placePhoto?.detailUrl}
+                  onEdit={(target) => {
+                    setReviewing(false);
+                    setReturnToReview(true);
+                    setConsent(false);
+                    setStep(target);
+                  }}
+                />
+              </>
             ) : step === 1 ? (
               <>
-                <FormField
-                  label="الاسم اللي هيظهر للناس *"
-                  inputRef={(node) => {
-                    fieldRefs.current.name = node;
-                  }}
-                  onFieldLayout={(event) => {
-                    fieldY.current.name = event.nativeEvent.layout.y;
-                  }}
-                  value={values.name}
-                  onChangeText={(value) => update('name', value)}
-                  placeholder="مثال: أحمد محمود"
-                  error={errors.name}
-                  editable={!busy}
-                  maxLength={100}
-                />
-                <Text style={styles.label}>نوع الخدمة أو المجال *</Text>
-                <Pressable
-                  accessibilityRole="button"
+                <View
+                  style={styles.formPanel}
                   onLayout={(event) => {
-                    fieldY.current.categoryId = event.nativeEvent.layout.y;
+                    step1PanelY.current = event.nativeEvent.layout.y;
                   }}
-                  accessibilityLabel="اختيار نوع الخدمة"
-                  onPress={() => setCategoryOpen(!categoryOpen)}
-                  style={styles.selector}
-                  disabled={busy}
                 >
-                  {selectedCategory ? (
-                    <CategoryIcon icon={selectedCategory.icon} />
+                  <View style={styles.sectionHeading}>
+                    <View
+                      pointerEvents="none"
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                      style={styles.sectionIconBox}
+                    >
+                      <MaterialCommunityIcons
+                        name="storefront-outline"
+                        size={24}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                    </View>
+                    <View style={styles.sectionCopy}>
+                      <Text style={styles.panelTitle}>تعريف الخدمة</Text>
+                      <Text style={styles.body}>
+                        الاسم والمجال اللي هيظهروا في البحث
+                      </Text>
+                    </View>
+                  </View>
+                  {!listing && Platform.OS !== 'web' ? (
+                    <ProviderAction
+                      secondary
+                      title={
+                        importBusy
+                          ? 'بنفتح جهات الاتصال…'
+                          : 'استيراد من جهات الاتصال'
+                      }
+                      disabled={busy || importBusy}
+                      onPress={() => void importContact()}
+                    />
                   ) : null}
-                  <Text style={styles.body}>
-                    {selectedCategory?.name ?? 'اختار نوع الخدمة'}
-                  </Text>
-                  <MaterialCommunityIcons
-                    name="chevron-down"
-                    size={24}
-                    color={colors.muted}
+                  <FormField
+                    label="الاسم اللي هيظهر للناس *"
+                    inputRef={(node) => {
+                      fieldRefs.current.name = node;
+                    }}
+                    onFieldLayout={(event) => {
+                      fieldY.current.name =
+                        step1PanelY.current + event.nativeEvent.layout.y;
+                    }}
+                    value={values.name}
+                    onChangeText={(value) => update('name', value)}
+                    placeholder="مثال: أحمد محمود"
+                    error={errors.name}
+                    editable={!busy}
+                    maxLength={100}
                   />
-                </Pressable>
-                {errors.categoryId ? (
-                  <Text style={styles.error}>{errors.categoryId}</Text>
-                ) : null}
-                <FormField
-                  label="تخصصك أو اسم مختصر لخدمتك *"
-                  inputRef={(node) => {
-                    fieldRefs.current.serviceTitle = node;
-                  }}
-                  onFieldLayout={(event) => {
-                    fieldY.current.serviceTitle = event.nativeEvent.layout.y;
-                  }}
-                  value={values.serviceTitle}
-                  onChangeText={(value) => update('serviceTitle', value)}
-                  placeholder={
-                    serviceExamples[values.categoryId]
-                      ? `مثال: ${serviceExamples[values.categoryId].title}`
-                      : 'اكتب تخصصك أو اسم مختصر لخدمتك'
-                  }
-                  error={errors.serviceTitle}
-                  editable={!busy}
-                  maxLength={160}
-                />
-                <FormField
-                  label="نبذة عن الخدمة (اختياري)"
-                  value={values.description}
-                  onChangeText={(value) => update('description', value)}
-                  placeholder={
-                    serviceExamples[values.categoryId]?.description ??
-                    'اكتب تفاصيل بسيطة وسريعة عن شغلك وخبرتك...'
-                  }
-                  multiline
-                  editable={!busy}
-                  maxLength={2000}
-                />
-                <Text style={styles.hint}>
-                  {values.description.length} / ٢٠٠٠
-                </Text>
+                  <View
+                    style={styles.fieldGroup}
+                    onLayout={(event) => {
+                      fieldY.current.categoryId =
+                        step1PanelY.current + event.nativeEvent.layout.y;
+                    }}
+                  >
+                    <Text style={styles.label}>نوع الخدمة أو المجال *</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="اختيار نوع الخدمة"
+                      onPress={() => setCategoryOpen(!categoryOpen)}
+                      style={[
+                        styles.selector,
+                        {
+                          borderColor: errors.categoryId
+                            ? colors.error
+                            : selectedCategory
+                              ? colors.primary
+                              : colors.inputBorder,
+                          backgroundColor: selectedCategory
+                            ? colors.surfaceLow
+                            : colors.inputBackground,
+                        },
+                      ]}
+                      disabled={busy}
+                    >
+                      {selectedCategory ? (
+                        <CategoryIcon icon={selectedCategory.icon} />
+                      ) : (
+                        <View
+                          pointerEvents="none"
+                          accessibilityElementsHidden
+                          importantForAccessibility="no-hide-descendants"
+                          style={styles.selectorPlaceholderIcon}
+                        >
+                          <MaterialCommunityIcons
+                            name="shape-outline"
+                            size={22}
+                            color={colors.primaryDark}
+                            accessibilityElementsHidden
+                          />
+                        </View>
+                      )}
+                      <Text
+                        style={[
+                          styles.selectorText,
+                          selectedCategory ? styles.label : styles.body,
+                        ]}
+                      >
+                        {selectedCategory?.name ?? 'اختار نوع الخدمة'}
+                      </Text>
+                      <MaterialCommunityIcons
+                        name="chevron-down"
+                        size={24}
+                        color={colors.muted}
+                        accessibilityElementsHidden
+                      />
+                    </Pressable>
+                    {selectedCategory ? (
+                      <View style={styles.categoryPreviewCard}>
+                        {selectedCategoryImage ? (
+                          <Image
+                            source={selectedCategoryImage}
+                            accessible={false}
+                            style={styles.categoryThumb}
+                            resizeMode="cover"
+                          />
+                        ) : null}
+                        <View style={styles.categoryPreviewCopy}>
+                          <Text style={styles.categoryPreviewDesc}>
+                            {selectedCategory.description}
+                          </Text>
+                          {selectedCategoryExample ? (
+                            <Text style={styles.hint}>
+                              مثال للتخصص: {selectedCategoryExample.title}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    ) : null}
+                    {errors.categoryId ? (
+                      <Text style={styles.error}>{errors.categoryId}</Text>
+                    ) : null}
+                  </View>
+                  <FormField
+                    label="تخصصك أو اسم مختصر لخدمتك *"
+                    inputRef={(node) => {
+                      fieldRefs.current.serviceTitle = node;
+                    }}
+                    onFieldLayout={(event) => {
+                      fieldY.current.serviceTitle =
+                        step1PanelY.current + event.nativeEvent.layout.y;
+                    }}
+                    value={values.serviceTitle}
+                    onChangeText={(value) => update('serviceTitle', value)}
+                    placeholder={
+                      selectedCategoryExample
+                        ? `مثال: ${selectedCategoryExample.title}`
+                        : 'اكتب تخصصك أو اسم مختصر لخدمتك'
+                    }
+                    error={errors.serviceTitle}
+                    editable={!busy}
+                    maxLength={160}
+                  />
+                  <View style={styles.fieldGroup}>
+                    <FormField
+                      label="نبذة عن الخدمة (اختياري)"
+                      value={values.description}
+                      onChangeText={(value) => update('description', value)}
+                      placeholder={
+                        selectedCategoryExample?.description ??
+                        'اكتب تفاصيل بسيطة وسريعة عن شغلك وخبرتك...'
+                      }
+                      multiline
+                      editable={!busy}
+                      maxLength={2000}
+                    />
+                    <Text style={styles.hint}>
+                      {values.description.length} / ٢٠٠٠
+                    </Text>
+                  </View>
+                </View>
                 <View style={styles.reviewNote}>
-                  <MaterialCommunityIcons
-                    name="shield-check-outline"
-                    size={28}
-                    color={colors.primaryDark}
+                  <View
+                    pointerEvents="none"
                     accessibilityElementsHidden
-                  />
+                    importantForAccessibility="no-hide-descendants"
+                    style={styles.sectionIconBox}
+                  >
+                    <MaterialCommunityIcons
+                      name="shield-check-outline"
+                      size={24}
+                      color={colors.primaryDark}
+                      accessibilityElementsHidden
+                    />
+                  </View>
                   <View style={styles.sectionCopy}>
-                    <Text style={styles.label}>إضافة خدمتك مجانية</Text>
+                    <Text style={styles.label}>
+                      {adminDirect
+                        ? 'نشر مباشر بصلاحية المشرف'
+                        : 'إضافة خدمتك مجانية'}
+                    </Text>
                     <Text style={styles.body}>
-                      هنراجع بيانات خدمتك الأول، وبعد الموافقة هتظهر في الدليل.
+                      {adminDirect
+                        ? 'الخدمة هتتنشر أو تتحدث فورًا في الدليل من غير حد أقصى للعدد.'
+                        : 'هنراجع بيانات خدمتك الأول، وبعد الموافقة هتظهر في الدليل.'}
                     </Text>
                   </View>
                 </View>
               </>
             ) : (
               <>
+                <View
+                  style={[
+                    styles.heroBanner,
+                    { backgroundColor: isDark ? '#203D50' : '#E4F0F8' },
+                  ]}
+                >
+                  <View
+                    pointerEvents="none"
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    style={StyleSheet.absoluteFill}
+                  >
+                    <Svg
+                      width="100%"
+                      height="100%"
+                      viewBox="0 0 400 140"
+                      preserveAspectRatio="none"
+                      accessible={false}
+                    >
+                      <Path
+                        d="M0 100Q110 120 220 92T400 108V140H0Z"
+                        fill={isDark ? '#2F556D' : '#CBE0F0'}
+                        opacity={0.75}
+                      />
+                    </Svg>
+                  </View>
+                  <View
+                    style={[
+                      styles.heroRow,
+                      compactBanner && styles.heroStacked,
+                    ]}
+                  >
+                    <View style={styles.heroCopy}>
+                      <Text style={styles.heroTitle}>إزاي الناس توصل ليك؟</Text>
+                      <Text style={styles.heroSubtitle}>
+                        ضيف رقمك ومكانك داخل منشأة العمار عشان العميل يكلمك أو
+                        يزورك بسهولة.
+                      </Text>
+                    </View>
+                    <AddServiceArtwork variant="step2" style={styles.heroArt} />
+                  </View>
+                </View>
                 <View
                   style={styles.formPanel}
                   onLayout={(event) => {
@@ -816,12 +1595,19 @@ export function ServiceForm({
                   }}
                 >
                   <View style={styles.sectionHeading}>
-                    <MaterialCommunityIcons
-                      name="phone-outline"
-                      size={28}
-                      color={colors.primaryDark}
+                    <View
+                      pointerEvents="none"
                       accessibilityElementsHidden
-                    />
+                      importantForAccessibility="no-hide-descendants"
+                      style={styles.sectionIconBox}
+                    >
+                      <MaterialCommunityIcons
+                        name="phone-outline"
+                        size={24}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                    </View>
                     <View style={styles.sectionCopy}>
                       <Text style={styles.heading}>بيانات التواصل</Text>
                       <Text style={styles.body}>
@@ -830,7 +1616,7 @@ export function ServiceForm({
                     </View>
                   </View>
                   <FormField
-                    label="رقم الموبايل *"
+                    label="رقم التواصل *"
                     inputRef={(node) => {
                       fieldRefs.current.phone = node;
                     }}
@@ -844,9 +1630,11 @@ export function ServiceForm({
                   />
                   <Pressable
                     accessibilityRole="checkbox"
-                    accessibilityState={{ checked: sameNumber }}
+                    accessibilityState={{
+                      checked: sameNumber && canUseSameNumber,
+                    }}
                     onPress={() => setSameNumber(!sameNumber)}
-                    disabled={busy}
+                    disabled={busy || !canUseSameNumber}
                     style={styles.check}
                   >
                     <MaterialCommunityIcons
@@ -859,10 +1647,10 @@ export function ServiceForm({
                       color={colors.primaryDark}
                     />
                     <Text style={styles.body}>
-                      رقم الواتساب هو نفس رقم الموبايل
+                      رقم الواتساب هو نفس رقم التواصل
                     </Text>
                   </Pressable>
-                  {!sameNumber ? (
+                  {!sameNumber || !canUseSameNumber ? (
                     <FormField
                       label="رقم واتساب (اختياري)"
                       inputRef={(node) => {
@@ -882,9 +1670,29 @@ export function ServiceForm({
                   style={styles.formPanel}
                   onLayout={(event) => {
                     fieldY.current.serviceMode = event.nativeEvent.layout.y;
-                    fieldY.current.coverageAreas = event.nativeEvent.layout.y;
                   }}
                 >
+                  <View style={styles.sectionHeading}>
+                    <View
+                      pointerEvents="none"
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                      style={styles.sectionIconBox}
+                    >
+                      <MaterialCommunityIcons
+                        name="briefcase-outline"
+                        size={24}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                    </View>
+                    <View style={styles.sectionCopy}>
+                      <Text style={styles.panelTitle}>أسلوب العمل</Text>
+                      <Text style={styles.body}>
+                        هل عندك مكان ولا بتروح للعميل
+                      </Text>
+                    </View>
+                  </View>
                   <AvailabilityFields
                     section="service"
                     value={values}
@@ -900,12 +1708,19 @@ export function ServiceForm({
                   }}
                 >
                   <View style={styles.sectionHeading}>
-                    <MaterialCommunityIcons
-                      name="map-marker-outline"
-                      size={28}
-                      color={colors.primaryDark}
+                    <View
+                      pointerEvents="none"
                       accessibilityElementsHidden
-                    />
+                      importantForAccessibility="no-hide-descendants"
+                      style={styles.sectionIconBox}
+                    >
+                      <MaterialCommunityIcons
+                        name="map-marker-outline"
+                        size={24}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                    </View>
                     <View style={styles.sectionCopy}>
                       <Text style={styles.heading}>الموقع داخل البلد</Text>
                       <Text style={styles.body}>
@@ -924,19 +1739,41 @@ export function ServiceForm({
                     }}
                     value={values.address}
                     onChangeText={(value) => update('address', value)}
-                    placeholder="مثال: شارع المدارس، جنب المسجد الكبير"
+                    placeholder="مثال: شارع المدرسة، جنب المسجد الكبير"
                     multiline
                     error={errors.address}
                     editable={!busy}
                     maxLength={500}
                   />
                 </View>
+                {photoFieldNode}
                 <View
                   style={styles.formPanel}
                   onLayout={(event) => {
                     fieldY.current.weeklyHours = event.nativeEvent.layout.y;
                   }}
                 >
+                  <View style={styles.sectionHeading}>
+                    <View
+                      pointerEvents="none"
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                      style={styles.sectionIconBox}
+                    >
+                      <MaterialCommunityIcons
+                        name="clock-outline"
+                        size={24}
+                        color={colors.primaryDark}
+                        accessibilityElementsHidden
+                      />
+                    </View>
+                    <View style={styles.sectionCopy}>
+                      <Text style={styles.panelTitle}>أوقات التواجد</Text>
+                      <Text style={styles.body}>
+                        اختياري — ساعد الناس تعرف إمتى تكون متاح
+                      </Text>
+                    </View>
+                  </View>
                   <AvailabilityFields
                     section="hours"
                     onPendingHoursChange={setHoursPending}
@@ -955,52 +1792,66 @@ export function ServiceForm({
               </>
             )}
             {reviewing ? (
-              <View style={styles.formPanel}>
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: consent }}
-                  onPress={() => {
-                    setConsent(!consent);
-                    setErrors((current) => ({
-                      ...current,
-                      consent: undefined,
-                    }));
-                  }}
-                  disabled={busy}
-                  style={styles.check}
-                >
-                  <MaterialCommunityIcons
-                    name={
-                      consent ? 'checkbox-marked' : 'checkbox-blank-outline'
-                    }
-                    size={26}
-                    color={colors.primaryDark}
-                  />
+              adminDirect ? (
+                <View style={styles.formPanel}>
                   <Text style={styles.body}>
-                    أوافق على عرض اسمي وبيانات التواصل والعنوان داخل التطبيق بعد
-                    مراجعة الطلب.
+                    {listing || draftProviderId
+                      ? 'هيتم حفظ التعديلات مباشرة مع الاحتفاظ بصاحب الخدمة الأصلي.'
+                      : 'هيتم نشر الخدمة مباشرة في الدليل العام بدون حد أقصى للعدد.'}
                   </Text>
-                </Pressable>
-                {errors.consent ? (
-                  <Text style={styles.error}>{errors.consent}</Text>
-                ) : null}
-              </View>
-            ) : null}
-            {submitError === SERVICE_LIMIT_MESSAGE ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={support.openEmail}
-                style={styles.primary}
-              >
-                <Text style={styles.white}>
-                  تواصل مع الدعم لإضافة خدمات أكتر
-                </Text>
-              </Pressable>
+                </View>
+              ) : (
+                <View style={styles.formPanel}>
+                  <Pressable
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: consent }}
+                    onPress={() => {
+                      setConsent(!consent);
+                      setErrors((current) => ({
+                        ...current,
+                        consent: undefined,
+                      }));
+                    }}
+                    disabled={busy || !canUseSameNumber}
+                    style={styles.check}
+                  >
+                    <MaterialCommunityIcons
+                      name={
+                        consent ? 'checkbox-marked' : 'checkbox-blank-outline'
+                      }
+                      size={26}
+                      color={colors.primaryDark}
+                    />
+                    <Text style={styles.body}>
+                      أوافق على عرض اسمي وبيانات التواصل والعنوان داخل التطبيق
+                      بعد مراجعة الطلب.
+                    </Text>
+                  </Pressable>
+                  {errors.consent ? (
+                    <Text style={styles.error}>{errors.consent}</Text>
+                  ) : null}
+                </View>
+              )
             ) : null}
             {submitError ? (
               <Text accessibilityLiveRegion="polite" style={styles.error}>
                 {submitError}
               </Text>
+            ) : null}
+            {photoSubmitFailed && photoDraft.action === 'replace' ? (
+              <View style={styles.photoRecovery}>
+                <ProviderAction
+                  title="إعادة محاولة رفع الصورة"
+                  disabled={busy}
+                  onPress={() => void send()}
+                />
+                <ProviderAction
+                  secondary
+                  title="كمّل وابعت من غير صورة"
+                  disabled={busy}
+                  onPress={() => void continueWithoutPhoto()}
+                />
+              </View>
             ) : null}
           </ScrollView>
           <View style={styles.actionBar}>
@@ -1008,13 +1859,19 @@ export function ServiceForm({
               accessibilityRole="button"
               accessibilityLabel={
                 busy
-                  ? 'جارٍ إرسال الطلب...'
+                  ? adminDirect
+                    ? 'جارٍ حفظ الخدمة...'
+                    : 'جارٍ إرسال الطلب...'
                   : step === 1
                     ? returnToReview
                       ? 'العودة للمراجعة'
                       : 'التالي: بيانات التواصل والمكان'
                     : reviewing
-                      ? 'إرسال الطلب للمراجعة'
+                      ? adminDirect
+                        ? listing || draftProviderId
+                          ? 'حفظ التعديلات الآن'
+                          : 'نشر الخدمة الآن'
+                        : 'إرسال الطلب للمراجعة'
                       : 'مراجعة البيانات'
               }
               accessibilityState={{ disabled: busy, busy }}
@@ -1034,13 +1891,19 @@ export function ServiceForm({
               ) : null}
               <Text accessibilityLiveRegion="polite" style={styles.primaryText}>
                 {busy
-                  ? 'جارٍ إرسال الطلب...'
+                  ? adminDirect
+                    ? 'جارٍ حفظ الخدمة...'
+                    : 'جارٍ إرسال الطلب...'
                   : step === 1
                     ? returnToReview
                       ? 'العودة للمراجعة'
                       : 'التالي'
                     : reviewing
-                      ? 'إرسال الطلب للمراجعة'
+                      ? adminDirect
+                        ? listing || draftProviderId
+                          ? 'حفظ التعديلات الآن'
+                          : 'نشر الخدمة الآن'
+                        : 'إرسال الطلب للمراجعة'
                       : 'مراجعة البيانات'}
               </Text>
             </Pressable>
@@ -1069,6 +1932,19 @@ export function ServiceForm({
 }
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    stepperCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 12,
+    },
+    stepRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
     stepItem: { flex: 1, alignItems: 'center', gap: spacing.xs },
     stepCircle: {
       width: 32,
@@ -1079,11 +1955,23 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
     },
     stepNumber: { ...typography.label, color: colors.muted },
+    stepLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+    },
     stepLabel: {
       ...typography.caption,
       color: colors.textSecondary,
       writingDirection: 'rtl',
       textAlign: 'center',
+    },
+    stepConnector: {
+      width: 28,
+      height: 2,
+      borderRadius: 1,
+      marginBottom: 18,
     },
     mainAction: { flex: 1 },
     backAction: { maxWidth: '28%' },
@@ -1100,17 +1988,29 @@ const createStyles = (colors: ThemeColors) =>
     safe: { flex: 1, backgroundColor: colors.background },
     flex: { flex: 1 },
     header: {
+      minHeight: 72,
       flexDirection: 'row',
       alignItems: 'center',
-      padding: 16,
-      gap: 16,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      gap: spacing.sm,
+      backgroundColor: colors.header,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
     },
     back: {
-      minWidth: 48,
-      minHeight: 48,
+      width: 48,
+      height: 48,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceLow,
       justifyContent: 'center',
       alignItems: 'center',
     },
+    headerTitle: {
+      flex: 1,
+      textAlign: 'center',
+    },
+    headerSpacer: { width: 48, height: 48 },
     content: {
       padding: spacing.md,
       gap: spacing.md,
@@ -1118,6 +2018,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     heading: {
       ...typography.screenTitle,
+      color: colors.textPrimary,
+      writingDirection: 'rtl',
+      flexShrink: 1,
+    },
+    panelTitle: {
+      ...typography.sectionTitle,
       color: colors.textPrimary,
       writingDirection: 'rtl',
       flexShrink: 1,
@@ -1148,22 +2054,55 @@ const createStyles = (colors: ThemeColors) =>
       overflow: 'hidden',
     },
     progressFill: { height: 8, backgroundColor: colors.actionBackground },
+    fieldGroup: { gap: spacing.sm },
     selector: {
-      padding: 16,
+      padding: 12,
       borderRadius: 16,
-      backgroundColor: colors.surface,
+      borderWidth: 1,
       flexDirection: 'row',
       gap: 12,
       alignItems: 'center',
-      minHeight: 56,
+      minHeight: 64,
     },
-    options: { backgroundColor: colors.surface, borderRadius: 16, padding: 8 },
-    option: {
-      flexDirection: 'row',
-      gap: 12,
+    selectorPlaceholderIcon: {
+      width: 48,
+      height: 48,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceContainer,
       alignItems: 'center',
-      padding: 8,
-      minHeight: 48,
+      justifyContent: 'center',
+    },
+    selectorText: {
+      flex: 1,
+      minWidth: 0,
+      textAlign: 'auto',
+    },
+    categoryPreviewCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 12,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceLow,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    categoryThumb: {
+      width: 68,
+      height: 68,
+      borderRadius: 14,
+      backgroundColor: colors.surfaceContainer,
+    },
+    categoryPreviewCopy: {
+      flex: 1,
+      minWidth: 0,
+      gap: 4,
+    },
+    categoryPreviewDesc: {
+      ...typography.caption,
+      color: colors.textSecondary,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
     },
     check: {
       flexDirection: 'row',
@@ -1174,29 +2113,68 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: 16,
       minHeight: 56,
     },
-    stepHeading: {
+    heroBanner: {
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 16,
+      overflow: 'hidden',
+    },
+    heroRow: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      gap: 12,
+    },
+    heroStacked: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+    },
+    heroCopy: {
+      flex: 1,
+      minWidth: 0,
       gap: 8,
     },
-    stepBadge: {
+    heroPill: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    heroPillText: {
       ...typography.caption,
       color: colors.primaryDark,
-      backgroundColor: colors.surfaceContainer,
-      paddingHorizontal: 12,
-      paddingVertical: 4,
-      borderRadius: 20,
       writingDirection: 'rtl',
     },
-    welcome: {
-      backgroundColor: colors.surfaceContainer,
-      borderRadius: 22,
-      padding: spacing.sm + spacing.xs,
-      gap: spacing.xs,
+    heroTitle: {
+      ...typography.title,
+      color: colors.primaryDark,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+    },
+    heroSubtitle: {
+      ...typography.body,
+      color: colors.textSecondary,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+    },
+    heroArt: {
+      alignSelf: 'center',
     },
     sectionHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    sectionIconBox: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      backgroundColor: colors.surfaceContainer,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
     sectionCopy: { flex: 1, minWidth: 0, gap: 4 },
     formPanel: {
       backgroundColor: colors.surface,
@@ -1209,18 +2187,26 @@ const createStyles = (colors: ThemeColors) =>
     reviewNote: {
       backgroundColor: colors.surface,
       borderRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.border,
       padding: 16,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
     },
-    hint: { ...typography.caption, color: colors.muted, textAlign: 'auto' },
+    hint: {
+      ...typography.caption,
+      color: colors.muted,
+      textAlign: 'auto',
+      writingDirection: 'rtl',
+    },
     white: { color: colors.onPrimary },
     error: {
       ...typography.caption,
       color: colors.error,
       writingDirection: 'rtl',
     },
+    photoRecovery: { gap: spacing.xs },
     primary: {
       minHeight: 56,
       padding: 16,

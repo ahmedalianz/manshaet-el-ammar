@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { returnToRoute } from '../../../features/navigation/returnToRoute';
 import { useQueryClient } from '@tanstack/react-query';
 import { AnimatedSuccessCheck } from '../../../components/ui/AnimatedSuccessCheck';
 import { LoadingState } from '../../../components/ui/LoadingState';
@@ -45,7 +46,7 @@ function ReportForm({
   const [reportId, setReportId] = useState('');
   const lock = useRef(false);
   const backToService = () =>
-    router.replace({ pathname: '/provider/[id]', params: { id } });
+    returnToRoute({ pathname: '/provider/[id]', params: { id } });
   const send = async () => {
     if (lock.current || reportId) return;
     if (!reason.trim()) {

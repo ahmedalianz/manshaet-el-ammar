@@ -45,7 +45,7 @@ const values = {
   description: '',
   phone: '01012345678',
 
-  address: 'شارع المدارس',
+  address: 'شارع المدرسة',
 };
 beforeEach(() => {
   mockData.clear();
@@ -100,7 +100,6 @@ describe('Firestore request transaction', () => {
     expect(mockWrites.map((write) => write.path)).toEqual([
       'serviceRequests/r1',
       'requestSlots/provider-r1',
-      'serviceQuotas/owner',
     ]);
     expect(mockWrites[0].data).toMatchObject({
       status: 'pending',
@@ -174,25 +173,14 @@ describe('Firestore request transaction', () => {
   });
 });
 
-it('blocks a fourth new service without writing', async () => {
-  mockData.set('serviceQuotas/owner', { serviceIds: ['a', 'b', 'c'] });
-  await expect(
-    submitRequest(db, 'owner', values, undefined, 'r4', true),
-  ).rejects.toThrow('تواصل مع الدعم');
-  expect(mockWrites).toHaveLength(0);
-});
-it('allows a support-approved higher limit', async () => {
-  mockData.set('serviceQuotas/owner', {
-    serviceIds: ['a', 'b', 'c'],
-    limit: 4,
-  });
+it('allows submitting more than 3 new services', async () => {
   await expect(
     submitRequest(db, 'owner', values, undefined, 'r4', true),
   ).resolves.toBe('provider-r4');
 });
 
 describe('owner archive corrections', () => {
-  it('submits a restore request with consent and quota, without publishing', async () => {
+  it('submits a restore request with consent, without publishing', async () => {
     mockData.set('archivedProviders/p', {
       ownerId: 'owner',
       archiveStatus: 'unpublished',
@@ -207,10 +195,6 @@ describe('owner archive corrections', () => {
     expect(mockWrites.some((write) => write.path === 'providers/p')).toBe(
       false,
     );
-    expect(
-      mockWrites.find((write) => write.path === 'serviceQuotas/owner')!.data
-        .serviceIds,
-    ).toEqual(['p']);
   });
   it('rejects a correction for somebody else’s archive', async () => {
     mockData.set('archivedProviders/p', {

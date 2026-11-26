@@ -159,7 +159,7 @@ describe('account and More integration', () => {
     await fireEvent.press(screen.getByText('provider session'));
     const services = JSON.stringify(current.services);
     const requests = JSON.stringify(current.requests);
-    await fireEvent.press(screen.getByText('تسجيل الخروج'));
+    await fireEvent.press(screen.getAllByText('تسجيل الخروج')[0]);
     expect(current.role).toBe('provider');
     await fireEvent.press(screen.getByRole('button', { name: 'تسجيل الخروج' }));
     expect(current.role).toBe('guest');

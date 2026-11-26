@@ -83,13 +83,13 @@ it('keeps unpublish separate from permanent deletion', async () => {
   ).toBeTruthy();
   await fireEvent.changeText(
     screen.getByLabelText('سبب إخفاء الخدمة'),
-    ' راجع رقم الموبايل ',
+    ' راجع رقم التواصل ',
   );
   await fireEvent.press(
     screen.getByRole('button', { name: 'تأكيد إخفاء الخدمة' }),
   );
   await waitFor(() =>
-    expect(mockUnpublish).toHaveBeenCalledWith('p1', 'راجع رقم الموبايل'),
+    expect(mockUnpublish).toHaveBeenCalledWith('p1', 'راجع رقم التواصل'),
   );
   expect(mockDelete).not.toHaveBeenCalled();
 });

@@ -6,27 +6,17 @@ import { openSupportLink, supportConfig } from './config';
 export function useSupportActions() {
   const feedback = useFeedback();
   const busy = useRef(false);
-  const open = async (
-    kind: 'privacy' | 'deletion-page' | 'email' | 'deletion',
-  ) => {
+  const open = async (kind: 'privacy' | 'email') => {
     if (busy.current) return;
     busy.current = true;
     try {
       if (
-        await openSupportLink(kind, { openURL: (url) => Linking.openURL(url) })
+        !(await openSupportLink(kind, {
+          openURL: (url) => Linking.openURL(url),
+        }))
       ) {
-        if (kind === 'deletion')
-          feedback.show(
-            'كمّل إرسال طلبك',
-            'فتح البريد لوحده مش بيبعت الطلب ولا بيحذف الحساب. ابعت الرسالة من بريد حسابك واستنى رد الدعم.',
-          );
-      } else {
         const value =
-          kind === 'privacy'
-            ? supportConfig.privacyUrl
-            : kind === 'deletion-page'
-              ? supportConfig.deletionUrl
-              : supportConfig.email;
+          kind === 'privacy' ? supportConfig.privacyUrl : supportConfig.email;
         feedback.show(
           'مش قادرين نفتح الرابط',
           `تقدر تستخدم العنوان ده بنفسك:\n${value}`,
@@ -56,25 +46,8 @@ export function useSupportActions() {
       busy.current = false;
     }
   };
-  const requestDeletion = () =>
-    feedback.show(
-      'طلب حذف الحساب',
-      'الدعم هيتأكد إن الحساب حسابك، ويراجع طلب حذف بياناتك وخدماتك المنشورة. الطلب بياخد من ٣ إلى ٥ أيام. لو عايز تعرف إيه اللي بيتحذف وإيه اللي بيتحفظ، اسأل الدعم. مفيش بيانات هتتحذف دلوقتي. بعد تنفيذ الحذف، ممكن متقدرش ترجعها.',
-      [
-        { text: 'إلغاء', style: 'cancel' },
-        {
-          text: 'فتح البريد لطلب الحذف',
-          style: 'destructive',
-          onPress: () => {
-            void open('deletion');
-          },
-        },
-      ],
-    );
   return {
     openPrivacy: () => void open('privacy'),
-    openDeletionPage: () => void open('deletion-page'),
     openEmail: () => void open('email'),
-    requestDeletion,
   };
 }

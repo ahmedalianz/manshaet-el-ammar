@@ -55,14 +55,15 @@ describe('provider clipboard notifications', () => {
   it('expands and collapses practical service tips', async () => {
     await setup();
     const toggle = screen.getByRole('button', {
-      name: /قبل ما تتفق على الشغل/,
+      name: /خلّي بالك قبل ما تتواصل/,
     });
-    expect(toggle.props.accessibilityState.expanded).toBe(false);
-    await fireEvent.press(toggle);
-    expect(screen.getByText(/وضّح الشغل المطلوب/)).toBeTruthy();
     expect(toggle.props.accessibilityState.expanded).toBe(true);
+    expect(screen.getByText(/تأكد من هوية مقدم الخدمة/)).toBeTruthy();
     await fireEvent.press(toggle);
-    expect(screen.queryByText(/وضّح الشغل المطلوب/)).toBeNull();
+    expect(toggle.props.accessibilityState.expanded).toBe(false);
+    expect(screen.queryByText(/تأكد من هوية مقدم الخدمة/)).toBeNull();
+    await fireEvent.press(toggle);
+    expect(screen.getByText(/تأكد من هوية مقدم الخدمة/)).toBeTruthy();
   });
 
   it('opens the in-app report form with the service ID', async () => {
@@ -78,7 +79,7 @@ describe('provider clipboard notifications', () => {
     jest.mocked(Clipboard.setStringAsync).mockResolvedValue(true);
     await setup();
     await fireEvent.press(
-      screen.getByRole('button', { name: 'نسخ رقم الموبايل' }),
+      screen.getByRole('button', { name: 'نسخ رقم التواصل' }),
     );
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith('+201012345678');
     expect(screen.getAllByText('تم نسخ الرقم')).toHaveLength(1);
@@ -92,7 +93,7 @@ describe('provider clipboard notifications', () => {
     jest.mocked(Clipboard.setStringAsync).mockResolvedValue(false);
     await setup();
     await fireEvent.press(
-      screen.getByRole('button', { name: 'نسخ رقم الموبايل' }),
+      screen.getByRole('button', { name: 'نسخ رقم التواصل' }),
     );
     expect(screen.getByText('مش قادرين نفتح التواصل')).toBeTruthy();
     expect(screen.queryByText('تم نسخ الرقم')).toBeNull();
@@ -103,7 +104,7 @@ describe('provider clipboard notifications', () => {
       .mockRejectedValue(new Error('Unavailable'));
     await setup();
     await fireEvent.press(
-      screen.getByRole('button', { name: 'نسخ رقم الموبايل' }),
+      screen.getByRole('button', { name: 'نسخ رقم التواصل' }),
     );
     expect(screen.getByText('مش قادرين نفتح التواصل')).toBeTruthy();
     expect(screen.queryByText('تم نسخ الرقم')).toBeNull();
@@ -187,7 +188,9 @@ it('keeps both actions but displays a shared phone/WhatsApp number once', async 
   expect(screen.queryByText('منشورة في الدليل')).toBeNull();
   expect(screen.queryByText('رقم مقدم الخدمة')).toBeNull();
   expect(screen.getAllByText(mockProvider.address)).toHaveLength(1);
-  expect(screen.getByText('عن بيانات الخدمة')).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: 'خلّي بالك قبل ما تتواصل' }),
+  ).toBeTruthy();
 });
 it('keeps distinct contact numbers visible with the correct labels', async () => {
   await setup();

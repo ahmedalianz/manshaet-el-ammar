@@ -40,7 +40,7 @@ const values = (extra = {}) => ({
   serviceMode: 'fixed',
   description: 'وصف تجريبي',
   phone: '01012345678',
-  address: 'شارع المدارس، بجوار المسجد',
+  address: 'شارع المدرسة، بجوار المسجد',
   ...extra,
 });
 const requestData = (extra = {}) => ({
@@ -86,19 +86,7 @@ const writeSubmission = async (
   receiptChunks = ['0', '1', '2', '3'],
 ) => {
   const data = requestData(extra);
-  const quotaRef = doc(db, 'serviceQuotas', data.ownerId);
-  const quota = await getDoc(quotaRef);
   const batch = writeBatch(db);
-  if (
-    data.type === 'create' &&
-    !(quota.data()?.serviceIds ?? []).includes(data.providerId)
-  ) {
-    batch.set(quotaRef, {
-      ...quota.data(),
-      serviceIds: [...(quota.data()?.serviceIds ?? []), data.providerId],
-      updatedAt: serverTimestamp(),
-    });
-  }
   batch.set(doc(db, 'serviceRequests', id), data);
   if (data.proposedData.weeklyHours)
     for (const chunk of receiptChunks)
@@ -144,11 +132,6 @@ after(async () => {
 beforeEach(async () => {
   await environment.clearFirestore();
   await seed({
-    'serviceQuotas/owner': {
-      serviceIds: ['owned-service', 'pending-service'],
-      limit: 100,
-      updatedAt: yesterday,
-    },
     'categories/plumbing': {
       name: 'سباكة',
       description: 'أعمال منزلية',
@@ -429,23 +412,10 @@ describe('admin permanent service removal', () => {
       await assertFails(deleteDoc(doc(db, 'providers/owned-service')));
     }
   });
-  it('allows an admin to atomically remove the service, slot, submissions and quota reservation', async () => {
+  it('allows an admin to atomically remove the service, slot, and submissions', async () => {
     const db = adminDb();
     await assertSucceeds(
-      setDoc(doc(db, 'serviceQuotas/owner'), {
-        serviceIds: ['pending-service', 'other'],
-        updatedAt: serverTimestamp(),
-      }),
-    );
-    await assertSucceeds(
       runTransaction(db, async (transaction) => {
-        const quota = await transaction.get(doc(db, 'serviceQuotas/owner'));
-        transaction.update(quota.ref, {
-          serviceIds: quota
-            .data()
-            .serviceIds.filter((id) => id !== 'pending-service'),
-          updatedAt: serverTimestamp(),
-        });
         transaction.delete(doc(db, 'providers/pending-service'));
         transaction.delete(doc(db, 'requestSlots/pending-service'));
         transaction.delete(doc(db, 'serviceRequests/owned-pending'));
@@ -459,26 +429,10 @@ describe('admin permanent service removal', () => {
       (await getDoc(doc(db, 'requestSlots/pending-service'))).exists(),
       false,
     );
-    assert.deepEqual(
-      (await getDoc(doc(db, 'serviceQuotas/owner'))).data().serviceIds,
-      ['other'],
-    );
   });
-  it('allows admin unpublishing and releasing quota while preserving submissions', async () => {
+  it('allows admin unpublishing while preserving submissions', async () => {
     const db = adminDb();
-    await assertSucceeds(
-      setDoc(doc(db, 'serviceQuotas/owner'), {
-        serviceIds: ['owned-service'],
-        updatedAt: serverTimestamp(),
-      }),
-    );
-    const batch = writeBatch(db);
-    batch.delete(doc(db, 'providers/owned-service'));
-    batch.update(doc(db, 'serviceQuotas/owner'), {
-      serviceIds: [],
-      updatedAt: serverTimestamp(),
-    });
-    await assertSucceeds(batch.commit());
+    await assertSucceeds(deleteDoc(doc(db, 'providers/owned-service')));
     assert.equal(
       (await getDoc(doc(db, 'serviceRequests/owned-pending'))).exists(),
       true,
@@ -735,15 +689,8 @@ describe('immutable submissions and atomic request slots', () => {
         const slot = await transaction.get(
           doc(db, 'requestSlots/race-service'),
         );
-        const quotaRef = doc(db, 'serviceQuotas/owner');
-        const quota = await transaction.get(quotaRef);
         if (slot.exists())
           throw new Error('A pending request already occupies the slot.');
-        transaction.set(quotaRef, {
-          ...quota.data(),
-          serviceIds: [...quota.data().serviceIds, 'race-service'],
-          updatedAt: serverTimestamp(),
-        });
         transaction.set(
           doc(db, 'serviceRequests', id),
           requestData({ providerId: 'race-service' }),
@@ -910,97 +857,15 @@ describe('service validation and authenticated reporting', () => {
   });
 });
 
-describe('service quota enforcement', () => {
-  it('blocks a fourth reservation and cannot raise its own limit or remove IDs', async () => {
-    await seed({
-      'serviceQuotas/owner': {
-        serviceIds: ['a', 'b', 'c'],
-        updatedAt: yesterday,
-      },
-    });
-    await assertFails(
-      writeSubmission(ownerDb(), 'fourth', { providerId: 'fourth' }),
-    );
-    await assertFails(
-      updateDoc(doc(ownerDb(), 'serviceQuotas/owner'), { limit: 4 }),
-    );
-    await assertFails(
-      updateDoc(doc(ownerDb(), 'serviceQuotas/owner'), {
-        serviceIds: [],
-        updatedAt: serverTimestamp(),
-      }),
-    );
-    await assertFails(deleteDoc(doc(ownerDb(), 'serviceQuotas/owner')));
-  });
-  it('accepts three new services for a new owner and rejects a fourth', async () => {
-    for (let i = 1; i <= 3; i++)
+describe('unlimited provider submissions', () => {
+  it('allows an owner to submit more than 3 new services', async () => {
+    for (let i = 1; i <= 4; i++)
       await assertSucceeds(
-        writeSubmission(strangerDb(), `quota-${i}`, {
+        writeSubmission(strangerDb(), `unlimited-${i}`, {
           ownerId: 'stranger',
-          providerId: `quota-${i}`,
+          providerId: `unlimited-${i}`,
         }),
       );
-    await assertFails(
-      writeSubmission(strangerDb(), 'quota-4', {
-        ownerId: 'stranger',
-        providerId: 'quota-4',
-      }),
-    );
-  });
-  it('rejects unreserved creations and fabricated quota-only writes', async () => {
-    const db = ownerDb();
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'serviceRequests/unreserved'), requestData());
-    batch.set(doc(db, 'requestSlots/new-service'), slotData('unreserved'));
-    await assertFails(batch.commit());
-    await assertFails(
-      updateDoc(doc(db, 'serviceQuotas/owner'), {
-        serviceIds: ['owned-service', 'pending-service', 'fake'],
-        updatedAt: serverTimestamp(),
-      }),
-    );
-  });
-});
-
-describe('quota concurrency and support overrides', () => {
-  it('only accepts one of two competing requests for the last slot', async () => {
-    await seed({
-      'serviceQuotas/owner': {
-        serviceIds: ['owned-service', 'pending-service'],
-        updatedAt: yesterday,
-      },
-    });
-    const results = await Promise.allSettled(
-      ['last-one', 'last-two'].map((id) =>
-        writeSubmission(ownerDb(), id, { providerId: id }),
-      ),
-    );
-    assert.equal(
-      results.filter((result) => result.status === 'fulfilled').length,
-      1,
-    );
-    assert.equal(
-      (await getDoc(doc(ownerDb(), 'serviceQuotas/owner'))).data().serviceIds
-        .length,
-      3,
-    );
-  });
-  it('allows only an admin to increase the limit', async () => {
-    await seed({
-      'serviceQuotas/owner': {
-        serviceIds: ['a', 'b', 'c'],
-        updatedAt: yesterday,
-      },
-    });
-    await assertSucceeds(
-      updateDoc(doc(adminDb(), 'serviceQuotas/owner'), { limit: 4 }),
-    );
-    await assertSucceeds(
-      writeSubmission(ownerDb(), 'support-fourth', {
-        providerId: 'support-fourth',
-      }),
-    );
-    await assertFails(getDoc(doc(strangerDb(), 'serviceQuotas/owner')));
   });
 });
 
@@ -1072,15 +937,14 @@ describe('private unpublished recovery archive', () => {
     await assertFails(attempt('راجع العنوان', false));
     await assertSucceeds(attempt('راجع العنوان', true));
   });
-  it('allows owner corrections only as pending restore requests with consent and quota', async () => {
+  it('allows owner corrections only as pending restore requests with consent', async () => {
     await seed({
       'archivedProviders/hidden': archived(),
-      'serviceQuotas/owner': { serviceIds: [], updatedAt: yesterday },
       'categories/plumbing': { active: true },
     });
     const owner = environment.authenticatedContext('owner').firestore();
     const data = requestData({ providerId: 'hidden', type: 'restore' });
-    const submit = async (extra = {}, reserve = true) => {
+    const submit = async (extra = {}) => {
       const batch = writeBatch(owner);
       batch.set(doc(owner, 'serviceRequests', 'correction'), {
         ...data,
@@ -1090,15 +954,9 @@ describe('private unpublished recovery archive', () => {
         doc(owner, 'requestSlots', 'hidden'),
         slotData('correction', 'hidden'),
       );
-      if (reserve)
-        batch.set(doc(owner, 'serviceQuotas', 'owner'), {
-          serviceIds: ['hidden'],
-          updatedAt: serverTimestamp(),
-        });
       return batch.commit();
     };
     await assertFails(submit({ consent: false }));
-    await assertFails(submit({}, false));
     await assertFails(submit({ ownerId: 'other' }));
     await assertFails(submit({ type: 'create' }));
     await assertSucceeds(submit());
@@ -1111,25 +969,23 @@ describe('private unpublished recovery archive', () => {
 });
 
 describe('availability, confirmation and private support', () => {
-  it('allows a travelling provider to omit a home address but requires coverage and explicit mode', async () => {
+  it('allows travelling services without coverage or a home address, and requires an explicit mode', async () => {
     const owner = ownerDb();
     const legacy = values();
     delete legacy.serviceMode;
     await assertFails(
       writeSubmission(owner, 'no-mode', { proposedData: legacy }),
     );
-    await assertFails(
-      writeSubmission(owner, 'no-coverage', {
+    await assertSucceeds(
+      writeSubmission(owner, 'mobile-request', {
         proposedData: values({ serviceMode: 'mobile', address: '' }),
       }),
     );
-    await assertSucceeds(
-      writeSubmission(owner, 'mobile-request', {
-        proposedData: values({
-          serviceMode: 'mobile',
-          coverageAreas: ['all'],
-          address: '',
-        }),
+  });
+  it('rejects retired coverage fields in new submissions', async () => {
+    await assertFails(
+      writeSubmission(ownerDb(), 'retired-coverage', {
+        proposedData: values({ coverageAreas: ['all'] }),
       }),
     );
   });
@@ -1150,7 +1006,6 @@ describe('availability, confirmation and private support', () => {
         providerId: 'overnight-full',
         proposedData: values({
           serviceMode: 'both',
-          coverageAreas: ['وسط البلد'],
           whatsapp: '01112345678',
           location: { latitude: 30, longitude: 31 },
           weeklyHours: Object.fromEntries(
@@ -1324,32 +1179,631 @@ describe('availability, confirmation and private support', () => {
       }),
     );
   });
-  it('enforces deletion consent and type-specific staff transitions with a required rejection reason', async () => {
-    const ref = doc(ownerDb(), 'supportRequests', 'deletion');
-    const data = {
+  it('rejects deletion support tickets and deletion statuses while enforcing support staff transitions with required rejection reason', async () => {
+    const deletionRef = doc(ownerDb(), 'supportRequests', 'deletion');
+    const deletionData = {
       ownerId: 'owner',
       kind: 'deletion',
       message: 'طلب مراجعة الحذف',
       status: 'received',
+      consent: true,
+      consentedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
-    await assertFails(setDoc(ref, data));
+    await assertFails(setDoc(deletionRef, deletionData));
+
+    const supportRef = doc(ownerDb(), 'supportRequests', 'support-flow');
     await assertSucceeds(
-      setDoc(ref, { ...data, consent: true, consentedAt: serverTimestamp() }),
+      setDoc(supportRef, {
+        ownerId: 'owner',
+        kind: 'support',
+        message: 'استفسار عن الخدمة',
+        status: 'received',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
     );
-    const adminRef = doc(adminDb(), 'supportRequests', 'deletion');
-    const review = (status) => ({
+    const adminRef = doc(adminDb(), 'supportRequests', 'support-flow');
+    const review = (status, staffNote = '') => ({
       status,
-      staffNote: '',
+      staffNote,
       reviewedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
     await assertFails(updateDoc(adminRef, review('resolved')));
     await assertFails(updateDoc(adminRef, review('rejected')));
+    await assertFails(updateDoc(adminRef, review('awaiting_verification')));
+    await assertFails(updateDoc(adminRef, review('ready_for_deletion')));
     await assertSucceeds(updateDoc(adminRef, review('in_review')));
-    await assertSucceeds(updateDoc(adminRef, review('awaiting_verification')));
-    await assertSucceeds(updateDoc(adminRef, review('ready_for_deletion')));
+    await assertFails(updateDoc(adminRef, review('awaiting_verification')));
+    await assertSucceeds(updateDoc(adminRef, review('resolved', 'تم الحل')));
     await assertFails(updateDoc(adminRef, review('received')));
+  });
+});
+
+describe('photo lifecycle server boundaries', () => {
+  it('denies owners creating approved photo metadata or private candidate records', async () => {
+    await assertFails(
+      setDoc(doc(ownerDb(), 'servicePhotos/fake'), {
+        ownerId: 'owner',
+        status: 'uploaded',
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(ownerDb(), 'providers/p1'), {
+        placePhoto: { version: 'fake' },
+      }),
+    );
+    await assertFails(
+      setDoc(doc(ownerDb(), 'photoServiceCleanupJobs/fake'), {
+        ownerId: 'owner',
+        providerId: 'p1',
+        reason: 'delete',
+        state: 'pending',
+        createdAt: serverTimestamp(),
+      }),
+    );
+  });
+  it('allows owner/admin reading private metadata but denies guests and other owners', async () => {
+    await seed({
+      'servicePhotos/photo1': {
+        ownerId: 'owner',
+        serviceId: 'p1',
+        status: 'uploaded',
+      },
+    });
+    await assertSucceeds(getDoc(doc(ownerDb(), 'servicePhotos/photo1')));
+    await assertSucceeds(getDoc(doc(adminDb(), 'servicePhotos/photo1')));
+    await assertFails(getDoc(doc(guestDb(), 'servicePhotos/photo1')));
+    await assertFails(getDoc(doc(strangerDb(), 'servicePhotos/photo1')));
+  });
+});
+
+describe('photo request ownership binding', () => {
+  const candidate = (extra = {}) => ({
+    ownerId: 'owner',
+    serviceId: 'new-service',
+    submissionId: 'photo-request',
+    status: 'uploaded',
+    ...extra,
+  });
+  const replacement = {
+    photoChange: { action: 'replace', candidateId: 'candidate1' },
+    photoReviewStatus: 'pending',
+  };
+  it('accepts an uploaded candidate bound to this owner, service and submission', async () => {
+    await seed({ 'servicePhotos/candidate1': candidate() });
+    await assertSucceeds(
+      writeSubmission(ownerDb(), 'photo-request', replacement),
+    );
+  });
+  it('rejects foreign owner, service, submission and incomplete uploads', async () => {
+    for (const changed of [
+      { ownerId: 'stranger' },
+      { serviceId: 'other-service' },
+      { submissionId: 'other-request' },
+      { status: 'reserved' },
+      { status: 'deleted' },
+    ]) {
+      await seed({ 'servicePhotos/candidate1': candidate(changed) });
+      await assertFails(
+        writeSubmission(ownerDb(), 'photo-request', replacement),
+      );
+    }
+  });
+  it('requires explicit expectedPhotoVersion on a removal request', async () => {
+    const base = {
+      providerId: 'owned-service',
+      type: 'update',
+      photoReviewStatus: 'pending',
+    };
+    await assertFails(
+      writeSubmission(ownerDb(), 'remove-request', {
+        ...base,
+        photoChange: { action: 'remove' },
+      }),
+    );
+    await assertFails(
+      writeSubmission(ownerDb(), 'remove-request', {
+        ...base,
+        photoChange: { action: 'remove', expectedPhotoVersion: 42 },
+      }),
+    );
+    await assertSucceeds(
+      writeSubmission(ownerDb(), 'remove-request', {
+        ...base,
+        photoChange: { action: 'remove', expectedPhotoVersion: 'version1' },
+      }),
+    );
+  });
+});
+
+describe('photo archive integrity', () => {
+  const photo = {
+    version: 'version1',
+    thumbnailUrl: 'https://res.cloudinary.com/sx5exugy/image/upload/thumb.jpg',
+    detailUrl: 'https://res.cloudinary.com/sx5exugy/image/upload/detail.jpg',
+    width: 1280,
+    height: 960,
+  };
+  const archive = () => ({
+    ...values(),
+    ownerId: 'owner',
+    publishedAt: yesterday,
+    archiveStatus: 'unpublished',
+    unpublishReason: 'تصحيح البيانات',
+    unpublishedAt: serverTimestamp(),
+    unpublishedBy: 'admin-user',
+    placePhoto: photo,
+  });
+  it('archives the exact approved photo and restores without publishing stale URLs', async () => {
+    await seed({
+      'providers/photo-service': {
+        ...values(),
+        ownerId: 'owner',
+        publishedAt: yesterday,
+        placePhoto: photo,
+      },
+    });
+    const db = adminDb();
+    const unpublish = (placePhoto) => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'archivedProviders/photo-service'), {
+        ...archive(),
+        placePhoto,
+      });
+      batch.delete(doc(db, 'providers/photo-service'));
+      return batch.commit();
+    };
+    await assertFails(unpublish({ ...photo, version: 'forged-version' }));
+    await assertSucceeds(unpublish(photo));
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'providers/photo-service'), {
+      ...values(),
+      ownerId: 'owner',
+      publishedAt: serverTimestamp(),
+    });
+    batch.update(doc(db, 'archivedProviders/photo-service'), {
+      archiveStatus: 'restored',
+      restoredAt: serverTimestamp(),
+      restoredBy: 'admin-user',
+    });
+    await assertSucceeds(batch.commit());
+  });
+});
+
+describe('admin unlimited creation and direct editing of any service', () => {
+  it('allows an admin to create more than 3 services directly', async () => {
+    const db = adminDb();
+    for (let i = 1; i <= 5; i++) {
+      await assertSucceeds(
+        setDoc(doc(db, `providers/admin-direct-${i}`), {
+          ...values({ serviceTitle: `خدمة مشرف ${i}` }),
+          ownerId: 'admin-user',
+          publishedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    }
+  });
+
+  it('allows an admin to edit any published service while preserving ownerId and rejecting ownerId changes', async () => {
+    const db = adminDb();
+    await assertSucceeds(
+      updateDoc(doc(db, 'providers/other-service'), {
+        serviceTitle: 'تعديل مباشر من المشرف',
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    const updated = await getDoc(doc(db, 'providers/other-service'));
+    assert.equal(updated.data().ownerId, 'stranger');
+    assert.equal(updated.data().serviceTitle, 'تعديل مباشر من المشرف');
+    await assertFails(
+      updateDoc(doc(db, 'providers/other-service'), {
+        ownerId: 'admin-user',
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(ownerDb(), 'providers/other-service'), {
+        serviceTitle: 'محاولة تعديل غير مصرح بها',
+      }),
+    );
+  });
+
+  it('allows an admin to edit an unpublished archived service in place without altering immutable archive fields', async () => {
+    await seed({
+      'archivedProviders/hidden-foreign': {
+        ...values(),
+        ownerId: 'stranger',
+        publishedAt: yesterday,
+        archiveStatus: 'unpublished',
+        unpublishReason: 'راجع البيانات',
+        unpublishedAt: yesterday,
+        unpublishedBy: 'admin-user',
+      },
+    });
+    const db = adminDb();
+    await assertSucceeds(
+      setDoc(doc(db, 'archivedProviders/hidden-foreign'), {
+        ...values({ serviceTitle: 'تعديل أرشيف من المشرف' }),
+        ownerId: 'stranger',
+        publishedAt: yesterday,
+        archiveStatus: 'unpublished',
+        unpublishReason: 'راجع البيانات',
+        unpublishedAt: yesterday,
+        unpublishedBy: 'admin-user',
+      }),
+    );
+    await assertFails(
+      setDoc(doc(db, 'archivedProviders/hidden-foreign'), {
+        ...values(),
+        ownerId: 'admin-user',
+        publishedAt: yesterday,
+        archiveStatus: 'unpublished',
+        unpublishReason: 'راجع البيانات',
+        unpublishedAt: yesterday,
+        unpublishedBy: 'admin-user',
+      }),
+    );
+    await assertFails(
+      setDoc(doc(db, 'archivedProviders/hidden-foreign'), {
+        ...values({ categoryId: 'inactive' }),
+        ownerId: 'stranger',
+        publishedAt: yesterday,
+        archiveStatus: 'unpublished',
+        unpublishReason: 'راجع البيانات',
+        unpublishedAt: yesterday,
+        unpublishedBy: 'admin-user',
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(strangerDb(), 'archivedProviders/hidden-foreign'), {
+        serviceTitle: 'تعديل مباشر غير مسموح',
+      }),
+    );
+  });
+});
+
+describe('photo provenance and server-managed field protection', () => {
+  const approvedPhoto = {
+    version: 'approvedv1',
+    thumbnailUrl: 'https://res.cloudinary.com/sx5exugy/image/upload/thumb.jpg',
+    detailUrl: 'https://res.cloudinary.com/sx5exugy/image/upload/detail.jpg',
+    width: 1280,
+    height: 960,
+  };
+  it('blocks admin client forging unapproved placePhoto, allows copying approvedPlacePhoto from active request or preserving existing photo', async () => {
+    const db = adminDb();
+    await assertFails(
+      setDoc(doc(db, 'providers/forged-photo'), {
+        ...values(),
+        ownerId: 'owner',
+        publishedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        placePhoto: approvedPhoto,
+      }),
+    );
+    await seed({
+      'serviceRequests/approved-photo-req': {
+        ...requestData({ providerId: 'approved-photo-service' }),
+        createdAt: yesterday,
+        updatedAt: yesterday,
+        consentedAt: yesterday,
+        photoReviewStatus: 'approved',
+        approvedPlacePhoto: approvedPhoto,
+      },
+      'requestSlots/approved-photo-service': {
+        ...slotData('approved-photo-req', 'approved-photo-service'),
+        updatedAt: yesterday,
+      },
+    });
+    await assertSucceeds(
+      setDoc(doc(db, 'providers/approved-photo-service'), {
+        ...values(),
+        ownerId: 'owner',
+        publishedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        placePhoto: approvedPhoto,
+      }),
+    );
+    await assertSucceeds(
+      setDoc(doc(db, 'providers/approved-photo-service'), {
+        ...values({ serviceTitle: 'تحديث النص فقط' }),
+        ownerId: 'owner',
+        publishedAt: yesterday,
+        updatedAt: serverTimestamp(),
+        placePhoto: approvedPhoto,
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(db, 'providers/approved-photo-service'), {
+        placePhoto: { ...approvedPhoto, version: 'forgedv2' },
+        updatedAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  it('prevents admin client updates from mutating server-managed photo review fields on serviceRequests', async () => {
+    const db = adminDb();
+    for (const patch of [
+      { photoReviewStatus: 'approved' },
+      { approvedPlacePhoto: approvedPhoto },
+      { photoChange: { action: 'remove', expectedPhotoVersion: null } },
+      { photoReviewReason: 'مزور' },
+    ]) {
+      await assertFails(
+        updateDoc(doc(db, 'serviceRequests/owned-pending'), {
+          ...patch,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    }
+  });
+
+  it('rejects account-delete photo cleanup jobs and allows admin service delete/unpublish jobs with providerId', async () => {
+    const accountDeleteJob = {
+      ownerId: 'owner',
+      reason: 'account-delete',
+      state: 'pending',
+      createdAt: serverTimestamp(),
+    };
+    await assertFails(
+      setDoc(doc(adminDb(), 'photoServiceCleanupJobs/acc-del'), accountDeleteJob),
+    );
+    await assertFails(
+      setDoc(
+        doc(ownerDb(), 'photoServiceCleanupJobs/owner-del'),
+        accountDeleteJob,
+      ),
+    );
+    await assertFails(
+      setDoc(
+        doc(guestDb(), 'photoServiceCleanupJobs/guest-del'),
+        accountDeleteJob,
+      ),
+    );
+    await assertSucceeds(
+      setDoc(doc(adminDb(), 'photoServiceCleanupJobs/svc-del'), {
+        ownerId: 'owner',
+        providerId: 'owned-service',
+        reason: 'delete',
+        state: 'pending',
+        createdAt: serverTimestamp(),
+      }),
+    );
+    await assertSucceeds(
+      setDoc(doc(adminDb(), 'photoServiceCleanupJobs/svc-unpub'), {
+        ownerId: 'owner',
+        providerId: 'owned-service',
+        reason: 'unpublish',
+        state: 'pending',
+        createdAt: serverTimestamp(),
+      }),
+    );
+  });
+});
+
+describe('service ownership claims and transfer rules', () => {
+  const claimPayload = (extra = {}) => ({
+    providerId: 'admin-added-service',
+    serviceName: 'مزود تجريبي',
+    serviceTitle: 'سباك صحي',
+    claimantId: 'stranger',
+    claimantName: 'أحمد صاحب الخدمة',
+    claimantPhone: '01099887766',
+    note: 'ده رقم المحل بتاعي',
+    status: 'pending',
+    consent: true,
+    consentedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...extra,
+  });
+
+  beforeEach(async () => {
+    await seed({
+      'providers/admin-added-service': {
+        ...values(),
+        ownerId: 'admin-user',
+        claimable: true,
+        publishedAt: yesterday,
+        updatedAt: yesterday,
+      },
+      'providers/regular-service': {
+        ...values(),
+        ownerId: 'owner',
+        publishedAt: yesterday,
+        updatedAt: yesterday,
+      },
+    });
+  });
+
+  it('allows a provider to submit a valid claim and blocks non-claimable services, admins, guests, and spoofing', async () => {
+    const db = strangerDb();
+    await assertSucceeds(
+      setDoc(
+        doc(db, 'serviceClaims/admin-added-service_stranger'),
+        claimPayload(),
+      ),
+    );
+
+    await seed({
+      'providers/admin-spoof-target': {
+        ...values(),
+        ownerId: 'admin-user',
+        claimable: true,
+        publishedAt: yesterday,
+        updatedAt: yesterday,
+      },
+    });
+    const newProviderDb = environment
+      .authenticatedContext('new-provider')
+      .firestore();
+    await assertSucceeds(
+      setDoc(
+        doc(newProviderDb, 'serviceClaims/admin-added-service_new-provider'),
+        claimPayload({ claimantId: 'new-provider' }),
+      ),
+    );
+
+    await assertFails(
+      setDoc(
+        doc(db, 'serviceClaims/regular-service_stranger'),
+        claimPayload({ providerId: 'regular-service' }),
+      ),
+    );
+    await assertFails(
+      setDoc(doc(db, 'serviceClaims/wrong-doc-id'), claimPayload()),
+    );
+    await assertFails(
+      setDoc(
+        doc(db, 'serviceClaims/admin-spoof-target_stranger'),
+        claimPayload({
+          providerId: 'admin-spoof-target',
+          serviceTitle: 'اسم مزور',
+        }),
+      ),
+    );
+    await assertFails(
+      setDoc(
+        doc(guestDb(), 'serviceClaims/admin-added-service_guest'),
+        claimPayload({ claimantId: 'guest' }),
+      ),
+    );
+    await assertFails(
+      setDoc(
+        doc(adminDb(), 'serviceClaims/admin-added-service_admin-user'),
+        claimPayload({ claimantId: 'admin-user' }),
+      ),
+    );
+  });
+
+  it('enforces claim read isolation and allows resubmission only after rejection', async () => {
+    await seed({
+      'serviceClaims/admin-added-service_stranger': {
+        ...claimPayload(),
+        status: 'rejected',
+        rejectionReason: 'راجع رقم الهاتف',
+        reviewedBy: 'admin-user',
+        reviewedAt: yesterday,
+        consentedAt: yesterday,
+        createdAt: yesterday,
+        updatedAt: yesterday,
+      },
+    });
+
+    await assertFails(
+      getDoc(doc(ownerDb(), 'serviceClaims/admin-added-service_stranger')),
+    );
+    await assertSucceeds(
+      getDoc(doc(strangerDb(), 'serviceClaims/admin-added-service_stranger')),
+    );
+
+    await assertSucceeds(
+      setDoc(
+        doc(strangerDb(), 'serviceClaims/admin-added-service_stranger'),
+        claimPayload({ claimantPhone: '01122334455' }),
+      ),
+    );
+  });
+
+  it('allows admin atomic claim rejection with reason and atomic claim approval with ownership transfer', async () => {
+    await seed({
+      'serviceClaims/admin-added-service_stranger': {
+        ...claimPayload(),
+        consentedAt: yesterday,
+        createdAt: yesterday,
+        updatedAt: yesterday,
+      },
+      'requestSlots/admin-added-service': {
+        ownerId: 'admin-user',
+        providerId: 'admin-added-service',
+        requestId: 'stale-admin-slot',
+        updatedAt: yesterday,
+      },
+    });
+
+    const aDb = adminDb();
+    await assertFails(
+      updateDoc(doc(aDb, 'serviceClaims/admin-added-service_stranger'), {
+        status: 'rejected',
+        rejectionReason: '   ',
+        reviewedBy: 'admin-user',
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+
+    await assertFails(
+      updateDoc(doc(aDb, 'serviceClaims/admin-added-service_stranger'), {
+        status: 'approved',
+        reviewedBy: 'admin-user',
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+
+    await assertFails(
+      updateDoc(doc(aDb, 'providers/regular-service'), {
+        ownerId: 'stranger',
+        claimable: false,
+        updatedAt: serverTimestamp(),
+      }),
+    );
+
+    const approveBatch = writeBatch(aDb);
+    approveBatch.update(doc(aDb, 'providers/admin-added-service'), {
+      ownerId: 'stranger',
+      claimable: false,
+      updatedAt: serverTimestamp(),
+    });
+    approveBatch.delete(doc(aDb, 'requestSlots/admin-added-service'));
+    approveBatch.update(
+      doc(aDb, 'serviceClaims/admin-added-service_stranger'),
+      {
+        status: 'approved',
+        reviewedBy: 'admin-user',
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+    );
+    await assertSucceeds(approveBatch.commit());
+
+    await assertSucceeds(
+      writeSubmission(strangerDb(), 'claimed-edit-req', {
+        ownerId: 'stranger',
+        providerId: 'admin-added-service',
+        type: 'update',
+        proposedData: values({ serviceTitle: 'تحديث بعد نقل الملكية' }),
+      }),
+    );
+
+    await seed({
+      'providers/admin-second-service': {
+        ...values(),
+        ownerId: 'admin-user',
+        claimable: true,
+        publishedAt: yesterday,
+        updatedAt: yesterday,
+      },
+      'serviceClaims/admin-second-service_stranger': {
+        ...claimPayload({ providerId: 'admin-second-service' }),
+        consentedAt: yesterday,
+        createdAt: yesterday,
+        updatedAt: yesterday,
+      },
+    });
+
+    await assertSucceeds(
+      updateDoc(doc(aDb, 'serviceClaims/admin-second-service_stranger'), {
+        status: 'rejected',
+        rejectionReason: 'تعذر التحقق من ملكية الخدمة',
+        reviewedBy: 'admin-user',
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    );
   });
 });

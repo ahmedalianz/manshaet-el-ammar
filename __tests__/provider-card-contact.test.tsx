@@ -86,7 +86,7 @@ describe('discovery card contact actions', () => {
     const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
     await setup(providers[0]);
     const button = screen.getByRole('button', {
-      name: 'رقم الموبايل مش متاح دلوقتي',
+      name: 'رقم التواصل مش متاح دلوقتي',
     });
     expect(button.props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(button);
@@ -101,7 +101,7 @@ describe('discovery card contact actions', () => {
       screen.getByRole('button', { name: `اتصال بـ ${real.name}` }),
     );
     expect(open).not.toHaveBeenCalled();
-    expect(screen.getByText('رقم الموبايل مش متاح دلوقتي')).toBeTruthy();
+    expect(screen.getByText('رقم التواصل مش متاح دلوقتي')).toBeTruthy();
   });
 });
 
@@ -156,7 +156,7 @@ it.each(['default', 'home', 'directory', 'illustrated'] as const)(
     expect(stopPropagation).toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
     expect(
-      screen.getByRole('button', { name: `إزالة ${real.name} من المفضلة` })
+      screen.getByRole('button', { name: `شيل ${real.name} من المفضلة` })
         .props.accessibilityState.selected,
     ).toBe(true);
     await flushLocalDirectory();
@@ -165,7 +165,7 @@ it.each(['default', 'home', 'directory', 'illustrated'] as const)(
         .favoriteIds,
     ).toContain(real.id);
     await fireEvent.press(
-      screen.getByRole('button', { name: `إزالة ${real.name} من المفضلة` }),
+      screen.getByRole('button', { name: `شيل ${real.name} من المفضلة` }),
     );
     expect(localDirectory.getCachedProvider(real.id)).toBeTruthy();
     expect(

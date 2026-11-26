@@ -13,14 +13,8 @@ import {
   where,
   type Firestore,
 } from '@firebase/firestore';
-export type RequestKind = 'support' | 'deletion';
-export type RequestStatus =
-  | 'received'
-  | 'in_review'
-  | 'resolved'
-  | 'rejected'
-  | 'awaiting_verification'
-  | 'ready_for_deletion';
+export type RequestKind = 'support';
+export type RequestStatus = 'received' | 'in_review' | 'resolved' | 'rejected';
 export type SupportRequest = {
   id: string;
   ownerId: string;
@@ -37,20 +31,10 @@ export const statusLabels: Record<RequestStatus, string> = {
   in_review: 'قيد المراجعة',
   resolved: 'تم الحل',
   rejected: 'مرفوض',
-  awaiting_verification: 'في انتظار التحقق',
-  ready_for_deletion: 'جاهز لتنفيذ الحذف يدويًا',
 };
-export function nextStatuses(
-  kind: RequestKind,
-  status: RequestStatus,
-): RequestStatus[] {
+export function nextStatuses(status: RequestStatus): RequestStatus[] {
   if (status === 'received') return ['in_review', 'rejected'];
-  if (status === 'in_review')
-    return kind === 'support'
-      ? ['resolved', 'rejected']
-      : ['awaiting_verification', 'rejected'];
-  if (kind === 'deletion' && status === 'awaiting_verification')
-    return ['ready_for_deletion', 'rejected'];
+  if (status === 'in_review') return ['resolved', 'rejected'];
   return [];
 }
 function reference(db: Firestore, id: string) {
@@ -64,20 +48,11 @@ export async function submitSupportRequest(
   db: Firestore,
   id: string,
   ownerId: string,
-  kind: RequestKind,
   message: string,
-  consent = false,
 ) {
   const text = message.trim();
-  if (
-    !ownerId ||
-    !['support', 'deletion'].includes(kind) ||
-    !text ||
-    text.length > 2000
-  )
+  if (!ownerId || !text || text.length > 2000)
     throw new Error('اكتب تفاصيل الطلب، بحد أقصى ٢٠٠٠ حرف');
-  if (kind === 'deletion' && !consent)
-    throw new Error('لازم توافق على طلب مراجعة حذف الحساب');
   const ref = reference(db, id);
   await runTransaction(db, async (transaction) => {
     const existing = await transaction.get(ref);
@@ -85,7 +60,7 @@ export async function submitSupportRequest(
       const data = existing.data();
       if (
         data.ownerId !== ownerId ||
-        data.kind !== kind ||
+        data.kind !== 'support' ||
         data.message !== text
       )
         throw new Error('رقم الطلب مستخدم بالفعل؛ راجع طلباتك');
@@ -93,14 +68,11 @@ export async function submitSupportRequest(
     }
     transaction.set(ref, {
       ownerId,
-      kind,
+      kind: 'support',
       message: text,
       status: 'received',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-      ...(kind === 'deletion'
-        ? { consent: true, consentedAt: serverTimestamp() }
-        : {}),
     });
   });
   return id;
@@ -116,11 +88,14 @@ export async function fetchSupportRequests(db: Firestore, ownerId?: string) {
       ),
     ),
   );
-  return result.docs.map((item) => mapSupportRequest(item.id, item.data()));
+  return result.docs
+    .filter((item) => item.data().kind === 'support')
+    .map((item) => mapSupportRequest(item.id, item.data()));
 }
 export async function fetchSupportRequest(db: Firestore, id: string) {
   const item = await readWithDeadline(getDocFromServer(reference(db, id)));
-  if (!item.exists()) throw new Error('الطلب غير موجود أو غير متاح لحسابك');
+  if (!item.exists() || item.data().kind !== 'support')
+    throw new Error('الطلب غير موجود أو غير متاح لحسابك');
   return mapSupportRequest(item.id, item.data());
 }
 export async function reviewSupportRequest(
@@ -137,7 +112,10 @@ export async function reviewSupportRequest(
     const item = await transaction.get(ref);
     if (!item.exists()) throw new Error('الطلب غير موجود');
     const current = item.data() as SupportRequest;
-    if (!nextStatuses(current.kind, current.status).includes(status))
+    if (
+      current.kind !== 'support' ||
+      !nextStatuses(current.status).includes(status)
+    )
       throw new Error('حالة الطلب اتغيرت؛ حدّث الصفحة');
     transaction.update(ref, {
       status,
@@ -154,7 +132,7 @@ function mapSupportRequest(
 ): SupportRequest {
   if (
     typeof data.ownerId !== 'string' ||
-    !['support', 'deletion'].includes(String(data.kind)) ||
+    data.kind !== 'support' ||
     typeof data.message !== 'string' ||
     data.message.length > 2000 ||
     !Object.keys(statusLabels).includes(String(data.status))
@@ -163,7 +141,7 @@ function mapSupportRequest(
   return {
     id,
     ownerId: data.ownerId,
-    kind: data.kind as RequestKind,
+    kind: 'support',
     message: data.message,
     status: data.status as RequestStatus,
     createdAt: timestampISO(data.createdAt),

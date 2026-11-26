@@ -1,8 +1,14 @@
 import { afterEach, expect, it, jest } from '@jest/globals';
-import { AccessibilityInfo } from 'react-native';
+import {
+  AccessibilityInfo,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native';
 import * as Reanimated from 'react-native-reanimated';
+import { act, renderHook } from '@testing-library/react-native';
 import { render, screen } from './helpers/render';
 import { CommunityHeader } from '../src/components/brand/CommunityHeader';
+import { useCompactHeader } from '../src/components/brand/useCompactHeader';
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -55,4 +61,49 @@ it('honors reduced motion and retains the page heading when compact', async () =
   expect(timing).not.toHaveBeenCalled();
   expect(screen.getByRole('header', { name: 'المزيد' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'تسجيل الدخول' })).toBeTruthy();
+});
+
+it('tracks continuous scrollY offsets in useCompactHeader without oscillating compact state between 20 and 48', async () => {
+  const shared = Reanimated.useSharedValue(0);
+  jest
+    .spyOn(Reanimated, 'useSharedValue')
+    .mockReturnValue(shared as Reanimated.SharedValue<unknown>);
+  const { result } = await renderHook(() => useCompactHeader());
+  const scrollEvent = (y: number) =>
+    ({
+      nativeEvent: { contentOffset: { x: 0, y } },
+    }) as unknown as NativeSyntheticEvent<NativeScrollEvent>;
+
+  expect(result.current.compact).toBe(false);
+  expect(result.current.scrollY.value).toBe(0);
+
+  await act(() => {
+    result.current.onScroll(scrollEvent(30));
+  });
+  expect(result.current.scrollY.value).toBe(30);
+  expect(result.current.compact).toBe(false);
+
+  await act(() => {
+    result.current.onScroll(scrollEvent(60));
+  });
+  expect(result.current.scrollY.value).toBe(60);
+  expect(result.current.compact).toBe(true);
+
+  await act(() => {
+    result.current.onScroll(scrollEvent(90));
+  });
+  expect(result.current.scrollY.value).toBe(90);
+  expect(result.current.compact).toBe(true);
+
+  await act(() => {
+    result.current.onScroll(scrollEvent(32));
+  });
+  expect(result.current.scrollY.value).toBe(32);
+  expect(result.current.compact).toBe(true);
+
+  await act(() => {
+    result.current.onScroll(scrollEvent(16));
+  });
+  expect(result.current.scrollY.value).toBe(16);
+  expect(result.current.compact).toBe(false);
 });

@@ -79,7 +79,7 @@ Planned Firestore collections: `users`, `categories`, `providers`, and `reports`
 
 ## Next steps
 
-Phases 4 and 5 add shared local moderation, role-aware More, account profile editing, and informational pages. Services, request history, reports, and demo accounts share one in-memory context; public discovery reads only its published projection. Admin tools and simulated sign-in are development-only. Password reset is disabled; contact configuration and final policy content remain unavailable. See [the manual workflow checklist](docs/MOCK_WORKFLOW_CHECKLIST.md) for lifecycle scenarios and migration limits.
+Phases 4 and 5 add shared local moderation, role-aware More, account profile editing, and informational pages. Services, request history, reports, and demo accounts share one in-memory context; public discovery reads only its published projection. Admin tools and simulated sign-in are development-only. Password reset is disabled; contact configuration and final policy content remain unavailable.
 
 1. Review the local demo flows on target devices.
 2. Implement real authentication, moderation, and restrictive Firestore Security Rules in a later approved phase.
@@ -109,17 +109,13 @@ Expo SDK 58 requires `expo-system-ui` for native Android appearance support; it 
 
 ## Connected Firebase project
 
-The app is configured for `manshyat-amar` with Standard Firestore in Frankfurt (`europe-west3`). Email/password and Google providers are enabled; the category catalog, security rules, and indexes are deployed. See [Firebase setup](docs/firebase-setup.md) for current app behavior, Google Android signing/rebuild requirements, iOS configuration limits, local verification commands, and administration. The earlier mock-phase descriptions above are historical; production sessions and requests now use Firebase rather than simulated sign-in.
+The app is configured for `manshyat-amar` with Standard Firestore in Frankfurt (`europe-west3`). Email/password and Google providers are enabled; the category catalog, security rules, and indexes are deployed. The earlier mock-phase descriptions above are historical; production sessions and requests now use Firebase rather than simulated sign-in.
 
 ## Android launch readiness
 
-The launch-readiness pass does **not** declare the app production-ready. See
-[the Android launch checklist](docs/android-launch-checklist.md),
-[the Arabic privacy draft](docs/privacy-policy.ar.md),
-[public deletion content awaiting approval/hosting](docs/account-deletion.ar.md),
-[the trusted deletion cleanup requirements](docs/account-deletion-operations.md),
-and [Arabic store listing drafts](docs/store-listing.ar.md).
-Support and privacy links use owner-supplied values in `src/features/support/config.ts`.
-The current deletion UI opens a confirmed email request; it does not delete an
-account or claim request delivery. Production data was not deleted, and no
-signed release, Play upload, signing-key creation or rules deployment was performed.
+The launch-readiness pass does **not** declare the app production-ready. Support and privacy links use owner-supplied values in `src/features/support/config.ts`.
+In-app account deletion requires confirmation and reauthentication (Password or
+Google), deletes user-owned Firestore records and Cloudinary photos via
+`DELETE /v1/account`, and deletes the Firebase Auth account immediately.
+Production data was not deleted, and no signed release, Play upload,
+signing-key creation or rules deployment was performed.

@@ -21,12 +21,6 @@ export function formatAvailabilityField(
           both: 'مكان ثابت وبروح للعميل',
         }[value.serviceMode]
       : 'غير محدد';
-  if (field === 'coverageAreas')
-    return (
-      value.coverageAreas
-        ?.map((area) => (area === 'all' ? 'كل منشأة العمار' : area))
-        .join('، ') || 'غير محدد'
-    );
   return (
     dayKeys
       .flatMap((key, index) => {

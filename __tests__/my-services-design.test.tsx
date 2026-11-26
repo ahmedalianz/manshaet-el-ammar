@@ -21,7 +21,7 @@ const fixtures: ProviderListing[] = [
     id: 'rejected',
     status: 'rejected',
     serviceTitle: 'خدمة تحتاج تعديل',
-    rejectionReason: 'راجع رقم الموبايل',
+    rejectionReason: 'راجع رقم التواصل',
   },
   {
     ...base,
@@ -130,10 +130,14 @@ describe('Stitch My Services dashboard', () => {
   it('keeps rejection reasons and correct published-data explanations', async () => {
     await render(<MyServices />);
     await chooseFilter('تحتاج تعديل (٢)');
-    expect(screen.getByText('راجع رقم الموبايل')).toBeTruthy();
+    expect(screen.getByText('راجع رقم التواصل')).toBeTruthy();
     expect(screen.getByText('وضّح عنوان الخدمة')).toBeTruthy();
-    expect(screen.getByText(/خدمتك الحالية لسه منشورة/)).toBeTruthy();
-    expect(screen.getByText(/خدمتك لسه مش منشورة/)).toBeTruthy();
+    expect(
+      screen.getAllByText(/خدمتك الحالية لسه منشورة/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/راجع الملاحظات وعدّل البيانات، ثم أعد إرسال الطلب/),
+    ).toBeTruthy();
   });
 
   it('provides real add, account and support destinations without fabricated metrics or timing', async () => {
@@ -181,6 +185,39 @@ describe('Stitch My Services dashboard', () => {
       pathname: '/provider/sign-in',
       params: { next: 'my-services', mode: 'register' },
     });
+  });
+
+  it('shows unified status panels across published, pending review and needs-edit cards', async () => {
+    mockListings = [
+      fixtures[0],
+      fixtures[1],
+      fixtures[2],
+      fixtures[3],
+      fixtures[4],
+    ];
+    const view = await render(<MyServices />);
+
+    expect(screen.getAllByText('منشورة')).toHaveLength(1);
+    expect(screen.getAllByText('ظاهرة حاليًا')).toHaveLength(2);
+    expect(screen.getByText('تعديل الخدمة')).toBeTruthy();
+    expect(screen.getAllByText('شوف خدمتك زي ما الناس بتشوفها')).toHaveLength(
+      2,
+    );
+
+    expect(screen.getByText('طلب إضافة قيد المراجعة')).toBeTruthy();
+    expect(screen.getByText('تم إرسال الطلب')).toBeTruthy();
+    expect(screen.getByText('مراجعة البيانات')).toBeTruthy();
+    expect(screen.getByText('النشر في الدليل')).toBeTruthy();
+
+    expect(screen.getAllByText('ملاحظة المراجعة')).toHaveLength(2);
+    expect(screen.getByText('راجع رقم التواصل')).toBeTruthy();
+    expect(screen.getByText('وضّح عنوان الخدمة')).toBeTruthy();
+    expect(screen.queryByText('تحتاج تعديل البيانات')).toBeNull();
+
+    mockListings = [fixtures[1]];
+    await view.rerender(<MyServices />);
+    expect(screen.queryByText('تعديل الطلب')).toBeNull();
+    expect(screen.queryByText('شوف خدمتك زي ما الناس بتشوفها')).toBeNull();
   });
 });
 

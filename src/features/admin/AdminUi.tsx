@@ -2,6 +2,7 @@ import { formatAvailabilityField } from '../availability/format';
 import { LoadingState } from '../../components/ui/LoadingState';
 import { useFeedback, type FeedbackApi } from '../../components/ui/Feedback';
 import { router } from 'expo-router';
+import { returnToRoute } from '../navigation/returnToRoute';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { contactUrl, launchContactUrl } from '../discovery/contact';
@@ -110,20 +111,24 @@ export const fieldLabels: Record<keyof ServiceValues, string> = {
   categoryId: 'نوع الخدمة',
   serviceTitle: 'تخصص الخدمة',
   description: 'نبذة عن الخدمة',
-  phone: 'رقم الموبايل',
+  phone: 'رقم التواصل',
   whatsapp: 'رقم واتساب',
 
   address: 'العنوان',
   serviceMode: 'طريقة تقديم الخدمة',
-  coverageAreas: 'مناطق التغطية',
   weeklyHours: 'مواعيد العمل',
+  photoChange: 'صورة المكان',
 };
 export function fieldValue(values: ServiceValues, field: keyof ServiceValues) {
-  if (
-    field === 'serviceMode' ||
-    field === 'coverageAreas' ||
-    field === 'weeklyHours'
-  )
+  if (field === 'photoChange')
+    return values.photoChange?.action === 'replace'
+      ? 'صورة جديدة للمراجعة'
+      : values.photoChange?.action === 'remove'
+        ? 'طلب إزالة الصورة'
+        : (values as { placePhoto?: unknown }).placePhoto
+          ? 'صورة منشورة حاليًا'
+          : 'بدون تغيير';
+  if (field === 'serviceMode' || field === 'weeklyHours')
     return formatAvailabilityField(field, values);
   if (field === 'categoryId')
     return (
@@ -293,7 +298,7 @@ export function MissingRecord({
       title="العنصر غير متاح"
       message={text}
       actionLabel="العودة لإدارة الخدمات"
-      onAction={() => router.replace('/admin')}
+      onAction={() => returnToRoute('/admin')}
     />
   );
 }
@@ -500,7 +505,7 @@ export function DeleteServiceAction({
                   )
                 ) {
                   if (onDeleted) onDeleted();
-                  else router.replace('/admin');
+                  else returnToRoute('/admin');
                 }
               },
             },

@@ -1,4 +1,4 @@
-import type { ServiceCategory } from '../types';
+import type { IconName, ServiceCategory } from '../types';
 
 export const categories: ServiceCategory[] = [
   {
@@ -94,7 +94,7 @@ export const categories: ServiceCategory[] = [
     id: 'tailoring',
     name: 'الخياطة والتطريز',
     description: 'تفصيل وتعديل الملابس وأعمال الخياطة والتطريز',
-    icon: 'needle',
+    icon: 'content-cut',
     group: 'trades',
     keywords: ['خياطة', 'خياط', 'تفصيل', 'تطريز', 'ملابس'],
   },
@@ -114,6 +114,23 @@ export const categories: ServiceCategory[] = [
     group: 'trades',
     keywords: ['كسح', 'عربات', 'عربيات', 'شفط', 'بيارات', 'صرف صحي'],
   },
+  {
+    id: 'other',
+    name: 'خدمات تانية',
+    description: 'أي خدمة تانية مش موجودة في الأقسام المتاحة',
+    icon: 'dots-horizontal-circle-outline',
+    group: 'community',
+    keywords: [
+      'خدمات تانية',
+      'تانية',
+      'ثانية',
+      'أخرى',
+      'خدمات أخرى',
+      'متنوعة',
+      'غير ذلك',
+      'other',
+    ],
+  },
 ];
 
 export const homeCategoryIds = [
@@ -126,3 +143,12 @@ export const homeCategoryIds = [
   'education',
   'carpentry',
 ];
+
+/** Resolves a valid MaterialCommunityIcons name, falling back to the built-in category icon when remote/cached data carries a legacy or unknown icon name. */
+export function resolveCategoryIcon(id: string, rawIcon: unknown): IconName {
+  return (
+    categories.find((category) => category.icon === rawIcon)?.icon ??
+    categories.find((category) => category.id === id)?.icon ??
+    'briefcase-outline'
+  );
+}

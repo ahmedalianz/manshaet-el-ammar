@@ -1,9 +1,19 @@
 import type { Availability, WeeklyHours } from '../availability/types';
 import { validateAvailability } from '../availability/validation';
 import { canonicalJSON } from './changedFields';
-import { categories } from '../discovery/data/categories';
-import type { ServiceCategory, ServiceProvider } from '../discovery/types';
-import type { ProviderListing, ServiceRequest, ServiceValues } from './types';
+import { categories, resolveCategoryIcon } from '../discovery/data/categories';
+import type {
+  PlacePhoto,
+  ServiceCategory,
+  ServiceProvider,
+} from '../discovery/types';
+import type {
+  ClaimStatus,
+  ProviderListing,
+  ServiceClaim,
+  ServiceRequest,
+  ServiceValues,
+} from './types';
 import { normalizeMobile, validateService } from './validation';
 
 // Compact day tuples keep full-week validation within Firestore's expression limit.
@@ -107,9 +117,7 @@ export function mapCategory(id: string, value: unknown): ServiceCategory {
   const data = record(value);
   if (data.active !== true) throw new Error('القسم غير متاح.');
   const metadata = categories.find((category) => category.id === id);
-  const icon =
-    categories.find((category) => category.icon === data.icon)?.icon ??
-    'briefcase-outline';
+  const icon = resolveCategoryIcon(id, data.icon);
   return {
     id,
     name: text(data.name, 100),
@@ -117,6 +125,55 @@ export function mapCategory(id: string, value: unknown): ServiceCategory {
     icon,
     group: metadata?.group ?? 'community',
     keywords: metadata?.keywords ?? [],
+  };
+}
+function mapPhotoChange(
+  value: unknown,
+): NonNullable<ServiceValues['photoChange']> {
+  const data = record(value);
+  if (!['keep', 'replace', 'remove'].includes(String(data.action)))
+    throw new Error('طلب تغيير الصورة غير صحيح.');
+  if (data.action === 'replace')
+    return { action: 'replace', candidateId: text(data.candidateId, 128) };
+  if (data.action === 'remove') {
+    if (
+      data.expectedPhotoVersion !== null &&
+      typeof data.expectedPhotoVersion !== 'string'
+    )
+      throw new Error('إصدار الصورة المطلوب إزالتها غير صحيح.');
+    return {
+      action: 'remove',
+      expectedPhotoVersion:
+        data.expectedPhotoVersion === null
+          ? null
+          : text(data.expectedPhotoVersion, 128),
+    };
+  }
+  return { action: 'keep' };
+}
+export function mapPlacePhoto(value: unknown): PlacePhoto | undefined {
+  if (value == null) return undefined;
+  const data = record(value);
+  const thumbnailUrl = text(data.thumbnailUrl, 2000),
+    detailUrl = text(data.detailUrl, 2000);
+  if (
+    ![thumbnailUrl, detailUrl].every((url) =>
+      /^https:\/\/res\.cloudinary\.com\/sx5exugy\//.test(url),
+    ) ||
+    typeof data.width !== 'number' ||
+    typeof data.height !== 'number' ||
+    !Number.isFinite(data.width) ||
+    !Number.isFinite(data.height) ||
+    data.width <= 0 ||
+    data.height <= 0
+  )
+    throw new Error('بيانات الصورة غير صحيحة.');
+  return {
+    version: text(data.version, 200),
+    thumbnailUrl,
+    detailUrl,
+    width: data.width,
+    height: data.height,
   };
 }
 export function mapProvider(id: string, value: unknown): ServiceProvider {
@@ -128,6 +185,7 @@ export function mapProvider(id: string, value: unknown): ServiceProvider {
     status: 'approved',
     dataSource: 'firestore',
     publicationStatus: 'published',
+    ...(data.placePhoto ? { placePhoto: mapPlacePhoto(data.placePhoto) } : {}),
     ...(data.location ? mapLocation(data.location) : {}),
     ...((data.updatedAt ?? data.publishedAt)
       ? { updatedAt: timestampISO(data.updatedAt ?? data.publishedAt) }
@@ -135,6 +193,7 @@ export function mapProvider(id: string, value: unknown): ServiceProvider {
     ...(data.lastConfirmedAt
       ? { lastConfirmedAt: timestampISO(data.lastConfirmedAt) }
       : {}),
+    ...(data.claimable === true ? { claimable: true } : {}),
   };
 }
 function mapLocation(value: unknown) {
@@ -181,7 +240,38 @@ export function mapRequest(
     providerId: text(data.providerId, 200),
     type: data.type as ServiceRequest['type'],
     status: data.status as ServiceRequest['status'],
-    proposedData: fromStoredValues(data.proposedData),
+    proposedData: {
+      ...fromStoredValues(data.proposedData),
+      ...(data.photoChange
+        ? { photoChange: mapPhotoChange(data.photoChange) }
+        : {}),
+    },
+    ...(data.photoChange
+      ? { photoChange: mapPhotoChange(data.photoChange) }
+      : {}),
+    ...(['pending', 'approved', 'rejected'].includes(
+      String(data.photoReviewStatus),
+    )
+      ? {
+          photoReviewStatus:
+            data.photoReviewStatus as ServiceRequest['photoReviewStatus'],
+        }
+      : {}),
+    ...(data.photoReviewReason
+      ? { photoReviewReason: text(data.photoReviewReason, 1000) }
+      : {}),
+    ...(data.photoReviewedAt
+      ? {
+          photoReviewedAt:
+            typeof data.photoReviewedAt === 'string' &&
+            Number.isFinite(Date.parse(data.photoReviewedAt))
+              ? data.photoReviewedAt
+              : timestampISO(data.photoReviewedAt),
+        }
+      : {}),
+    ...(data.approvedPlacePhoto !== undefined
+      ? { approvedPlacePhoto: mapPlacePhoto(data.approvedPlacePhoto) ?? null }
+      : {}),
     createdAt: timestampISO(data.createdAt),
     ...(data.reviewedAt ? { reviewedAt: timestampISO(data.reviewedAt) } : {}),
     ...(data.rejectionReason
@@ -204,6 +294,34 @@ export function storedValuesMatch(
   }
 }
 
+export function mapServiceClaim(id: string, value: unknown): ServiceClaim {
+  const data = record(value);
+  if (
+    !['pending', 'approved', 'rejected'].includes(String(data.status)) ||
+    typeof data.note !== 'string' ||
+    data.note.length > 1000
+  )
+    throw new Error('في بيانات مش صحيحة في طلب نقل الملكية.');
+  return {
+    id,
+    providerId: text(data.providerId, 200),
+    serviceName: text(data.serviceName, 100),
+    serviceTitle: text(data.serviceTitle, 160),
+    claimantId: text(data.claimantId, 200),
+    claimantName: text(data.claimantName, 100),
+    claimantPhone: text(data.claimantPhone, 30),
+    note: data.note.trim(),
+    status: data.status as ClaimStatus,
+    createdAt: timestampISO(data.createdAt),
+    updatedAt: timestampISO(data.updatedAt),
+    ...(data.reviewedBy ? { reviewedBy: text(data.reviewedBy, 200) } : {}),
+    ...(data.reviewedAt ? { reviewedAt: timestampISO(data.reviewedAt) } : {}),
+    ...(data.rejectionReason
+      ? { rejectionReason: text(data.rejectionReason, 1000) }
+      : {}),
+  };
+}
+
 export function mapArchivedProvider(
   id: string,
   value: unknown,
@@ -214,6 +332,7 @@ export function mapArchivedProvider(
     throw new Error('الخدمة دي مش موجودة في الأرشيف.');
   return {
     ...mapOwnedProvider(id, data, uid),
+    ...(data.claimable === true ? { claimable: true } : {}),
     publicationStatus: 'unpublished',
     unpublishReason: text(data.unpublishReason, 1000),
     unpublishedAt: timestampISO(data.unpublishedAt),
@@ -227,9 +346,6 @@ function availabilityValues(
   const result = {
     ...(data.serviceMode !== undefined
       ? { serviceMode: data.serviceMode }
-      : {}),
-    ...(data.coverageAreas !== undefined
-      ? { coverageAreas: data.coverageAreas }
       : {}),
     ...(data.weeklyHours !== undefined
       ? { weeklyHours: data.weeklyHours }
@@ -280,7 +396,6 @@ function storedAvailability(
     : undefined;
   return {
     ...(clean.serviceMode ? { serviceMode: clean.serviceMode } : {}),
-    ...(clean.coverageAreas ? { coverageAreas: clean.coverageAreas } : {}),
     ...(weeklyHours ? { weeklyHours } : {}),
   };
 }

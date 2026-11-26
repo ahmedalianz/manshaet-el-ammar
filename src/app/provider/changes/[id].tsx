@@ -1,4 +1,5 @@
 import { fieldValue } from '../../../features/admin/AdminUi';
+import { PrivatePhotoPreview } from '../../../features/photos/PrivatePhotoPreview';
 import { RemoteDataNotice } from '../../../features/provider/RemoteDataNotice';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Text, View } from 'react-native';
@@ -19,7 +20,6 @@ const fields: { key: keyof ServiceValues; label: string }[] = [
   { key: 'whatsapp', label: 'واتساب' },
   { key: 'address', label: 'العنوان' },
   { key: 'serviceMode', label: 'طريقة تقديم الخدمة' },
-  { key: 'coverageAreas', label: 'مناطق التغطية' },
   { key: 'weeklyHours', label: 'مواعيد العمل' },
 ];
 export default function PendingChangesScreen() {
@@ -49,6 +49,32 @@ export default function PendingChangesScreen() {
               <Text style={s.body}>المقترح: {fieldValue(proposal, key)}</Text>
             </View>
           ))}
+          {(proposal.photoChange && proposal.photoChange.action !== 'keep') ||
+          listing.photoReviewStatus === 'pending' ? (
+            <View style={s.card}>
+              <Text style={s.label}>صورة المكان</Text>
+              <Text style={s.body}>
+                المنشور:{' '}
+                {listing.placePhoto
+                  ? 'صورة منشورة حاليًا'
+                  : 'لا توجد صورة منشورة'}
+              </Text>
+              <Text style={s.body}>
+                المقترح:{' '}
+                {proposal.photoChange?.action === 'remove'
+                  ? 'طلب إزالة الصورة'
+                  : 'صورة جديدة قيد المراجعة'}
+              </Text>
+              {listing.photoCandidateId ?? proposal.photoChange?.candidateId ? (
+                <PrivatePhotoPreview
+                  candidateId={
+                    (listing.photoCandidateId ??
+                      proposal.photoChange?.candidateId)!
+                  }
+                />
+              ) : null}
+            </View>
+          ) : null}
           <Text style={s.notice}>
             طلبك اتبعت للمراجعة، ومش هتقدر تعدّله دلوقتي. استنى نتيجة المراجعة
             قبل ما تبعت طلب جديد.

@@ -42,6 +42,8 @@ jest.mock('../src/lib/firebase/auth', () => ({
 }));
 jest.mock('../src/features/provider/firebaseAdminRepository', () => ({
   fetchModeration: jest.fn(),
+  fetchAdminService: jest.fn(),
+  saveAdminProvider: jest.fn(),
   reviewRequest: jest.fn(),
   unpublishProvider: jest.fn(),
   restoreProvider: jest.fn(),
@@ -67,7 +69,7 @@ const values: ServiceValues = {
   description: '',
   phone: '01012345678',
 
-  address: 'شارع المدارس',
+  address: 'شارع المدرسة',
 };
 function provider(id: string, ownerId = 'user-a'): ProviderListing {
   return {

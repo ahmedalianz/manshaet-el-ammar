@@ -1,8 +1,10 @@
-import { reserveService } from './serviceLimit';
+import { getPhotoApiUrl, photoRequest } from '../photos/api';
+import { validateAvailability } from '../availability/validation';
 import { readWithDeadline } from '../../lib/network';
 import {
   collection,
   doc,
+  getDocFromServer,
   getDocsFromServer,
   limit,
   orderBy,
@@ -19,8 +21,9 @@ import {
   mapProvider,
   mapRequest,
   timestampISO,
+  toStoredValues,
 } from './firebaseMapping';
-import type { PublishedService, ServiceReport } from './types';
+import type { PublishedService, ServiceReport, ServiceValues } from './types';
 
 export async function fetchModeration(db: Firestore) {
   const [requests, providers, reports, archived] = await Promise.all([
@@ -62,19 +65,45 @@ export async function fetchModeration(db: Firestore) {
       ),
     ),
   ]);
+  const photoRequests = await readWithDeadline(
+    getDocsFromServer(
+      query(
+        collection(db, 'serviceRequests'),
+        where('photoReviewStatus', '==', 'pending'),
+        limit(100),
+      ),
+    ),
+  );
+  const combinedRequests = [
+    ...new Map(
+      [...requests.docs, ...photoRequests.docs].map((item) => [item.id, item]),
+    ).values(),
+  ];
   return {
-    requests: requests.docs.map((item) =>
+    requests: combinedRequests.map((item) =>
       mapRequest(item.id, item.data(), item.data().ownerId),
     ),
     services: [
-      ...providers.docs.map<PublishedService>((item) => ({
-        ...mapOwnedProvider(item.id, item.data(), item.data().ownerId),
-        publicationStatus: 'published',
-      })),
-      ...archived.docs.map<PublishedService>((item) => ({
-        ...mapArchivedProvider(item.id, item.data(), item.data().ownerId),
-        publicationStatus: 'unpublished',
-      })),
+      ...providers.docs.map<PublishedService>((item) => {
+        const data = item.data();
+        return {
+          ...mapOwnedProvider(item.id, data, data.ownerId),
+          ...(data.claimable !== undefined
+            ? { claimable: Boolean(data.claimable) }
+            : {}),
+          publicationStatus: 'published',
+        };
+      }),
+      ...archived.docs.map<PublishedService>((item) => {
+        const data = item.data();
+        return {
+          ...mapArchivedProvider(item.id, data, data.ownerId),
+          ...(data.claimable !== undefined
+            ? { claimable: Boolean(data.claimable) }
+            : {}),
+          publicationStatus: 'unpublished',
+        };
+      }),
     ],
     reports: reports.docs.map<ServiceReport>((item) => {
       const data = item.data();
@@ -112,13 +141,13 @@ export async function reviewRequest(
   )
     throw new Error('اكتب سبب الرفض، بحد أقصى ١٠٠٠ حرف.');
   const requestRef = reference(db, 'serviceRequests', id);
+  let restorePhotoTarget: string | undefined;
   await runTransaction(db, async (transaction) => {
+    restorePhotoTarget = undefined;
     const request = await transaction.get(requestRef);
     if (!request.exists() || request.data().status !== 'pending')
       throw new Error('الطلب اتراجع قبل كده أو مبقاش متاح. حدّث القائمة.');
     const data = request.data();
-    const quotaRef = reference(db, 'serviceQuotas', data.ownerId);
-    const quota = await transaction.get(quotaRef);
     const providerRef = reference(db, 'providers', data.providerId);
     const slot = await transaction.get(
       reference(db, 'requestSlots', data.providerId),
@@ -159,15 +188,22 @@ export async function reviewRequest(
       // Explicit public projection: never copy private request metadata to providers.
       const source = data.proposedData;
       const publicValues = publicProjection(source);
-      const restoredQuota =
-        data.type === 'restore'
-          ? reserveService(
-              quota.exists() ? quota.data() : undefined,
-              data.providerId,
-            )
-          : undefined;
+      if (
+        data.type === 'restore' &&
+        data.photoReviewStatus !== 'approved' &&
+        Boolean(archive.data()?.placePhoto)
+      ) {
+        restorePhotoTarget = data.providerId;
+      }
       transaction.set(providerRef, {
         ...publicValues,
+        ...(provider.exists()
+          ? provider.data().placePhoto
+            ? { placePhoto: provider.data().placePhoto }
+            : {}
+          : data.photoReviewStatus === 'approved' && data.approvedPlacePhoto
+            ? { placePhoto: data.approvedPlacePhoto }
+            : {}),
         ownerId: data.ownerId,
         publishedAt: provider.exists()
           ? provider.data().publishedAt
@@ -180,22 +216,7 @@ export async function reviewRequest(
           restoredBy: reviewerId,
           restoredAt: serverTimestamp(),
         });
-        transaction.set(quotaRef, {
-          ...(quota.exists() ? quota.data() : {}),
-          serviceIds: restoredQuota,
-          updatedAt: serverTimestamp(),
-        });
       }
-    }
-    if (decision === 'rejected' && !provider.exists() && quota.exists()) {
-      transaction.update(quotaRef, {
-        serviceIds: quota
-          .data()
-          .serviceIds.filter(
-            (serviceId: string) => serviceId !== data.providerId,
-          ),
-        updatedAt: serverTimestamp(),
-      });
     }
     transaction.update(requestRef, {
       status: decision,
@@ -205,6 +226,16 @@ export async function reviewRequest(
       ...(decision === 'rejected' ? { rejectionReason: reason.trim() } : {}),
     });
   });
+  if (restorePhotoTarget && getPhotoApiUrl()) {
+    try {
+      await photoRequest(
+        `/v1/photos/services/${encodeURIComponent(restorePhotoTarget)}/restore`,
+        { method: 'POST' },
+      );
+    } catch {
+      /* Service is restored safely with category artwork; photo recovery can be retried. */
+    }
+  }
 }
 export async function unpublishProvider(
   db: Firestore,
@@ -219,8 +250,6 @@ export async function unpublishProvider(
     const provider = await transaction.get(ref);
     if (!provider.exists()) throw new Error('الخدمة دي مش منشورة أصلًا.');
     const data = provider.data();
-    const quotaRef = reference(db, 'serviceQuotas', data.ownerId);
-    const quota = await transaction.get(quotaRef);
     const slot = await transaction.get(reference(db, 'requestSlots', id));
     const pendingRef = slot.exists()
       ? reference(db, 'serviceRequests', slot.data().requestId)
@@ -228,6 +257,9 @@ export async function unpublishProvider(
     const pending = pendingRef ? await transaction.get(pendingRef) : null;
     transaction.set(reference(db, 'archivedProviders', id), {
       ...publicProjection(data),
+      ...(data.claimable !== undefined
+        ? { claimable: Boolean(data.claimable) }
+        : {}),
       ownerId: data.ownerId,
       publishedAt: data.publishedAt,
       archiveStatus: 'unpublished',
@@ -243,13 +275,13 @@ export async function unpublishProvider(
         reviewedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-    if (quota.exists())
-      transaction.update(quotaRef, {
-        serviceIds: quota
-          .data()
-          .serviceIds.filter((serviceId: string) => serviceId !== id),
-        updatedAt: serverTimestamp(),
-      });
+    transaction.set(doc(collection(db, 'photoServiceCleanupJobs')), {
+      providerId: id,
+      ownerId: data.ownerId,
+      reason: 'unpublish',
+      state: 'pending',
+      createdAt: serverTimestamp(),
+    });
     transaction.delete(ref);
   });
 }
@@ -262,6 +294,7 @@ function publicProjection(source: Record<string, unknown>) {
     lastConfirmedAt: undefined,
   });
   return {
+    ...(source.placePhoto ? { placePhoto: source.placePhoto } : {}),
     displayName: source.displayName,
     categoryId: source.categoryId,
     serviceTitle: source.serviceTitle,
@@ -270,7 +303,6 @@ function publicProjection(source: Record<string, unknown>) {
 
     address: source.address,
     ...(source.serviceMode ? { serviceMode: source.serviceMode } : {}),
-    ...(source.coverageAreas ? { coverageAreas: source.coverageAreas } : {}),
     ...(source.weeklyHours ? { weeklyHours: source.weeklyHours } : {}),
     ...(source.whatsapp ? { whatsapp: source.whatsapp } : {}),
     ...(mapped.latitude !== undefined && mapped.longitude !== undefined
@@ -297,8 +329,6 @@ export async function restoreProvider(
         'الخدمة مش في الأرشيف أو رجعت للدليل قبل كده. حدّث القائمة.',
       );
     const data = archive.data();
-    const quotaRef = reference(db, 'serviceQuotas', data.ownerId);
-    const quota = await transaction.get(quotaRef);
     const slot = await transaction.get(reference(db, 'requestSlots', id));
     const pending = slot.exists()
       ? await transaction.get(
@@ -315,12 +345,13 @@ export async function restoreProvider(
     if (!category.exists() || category.data().active !== true)
       throw new Error('قسم الخدمة مش متاح دلوقتي.');
     const projection = publicProjection(data);
-    const serviceIds = reserveService(
-      quota.exists() ? quota.data() : undefined,
-      id,
-    );
+    // Archived public delivery URLs are invalidated on unpublish.
+    delete (projection as { placePhoto?: unknown }).placePhoto;
     transaction.set(providerRef, {
       ...projection,
+      ...(data.claimable !== undefined
+        ? { claimable: Boolean(data.claimable) }
+        : {}),
       ownerId: data.ownerId,
       publishedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -330,12 +361,17 @@ export async function restoreProvider(
       restoredBy: reviewerId,
       restoredAt: serverTimestamp(),
     });
-    transaction.set(quotaRef, {
-      ...(quota.exists() ? quota.data() : {}),
-      serviceIds,
-      updatedAt: serverTimestamp(),
-    });
   });
+  if (getPhotoApiUrl()) {
+    try {
+      await photoRequest(
+        `/v1/photos/services/${encodeURIComponent(id)}/restore`,
+        { method: 'POST' },
+      );
+    } catch {
+      /* Service is restored safely with category artwork; photo recovery can be retried. */
+    }
+  }
 }
 // Delete the service and its submissions atomically so owner history cannot
 // reconstruct a removed listing or a pending edit republish it.
@@ -391,15 +427,6 @@ export async function deleteProvider(db: Firestore, id: string) {
         : slot.exists()
           ? slot.data().ownerId
           : history.find((request) => request.exists())?.data()?.ownerId;
-    const quotaRef = reference(db, 'serviceQuotas', ownerId);
-    const quota = await transaction.get(quotaRef);
-    if (quota.exists())
-      transaction.update(quotaRef, {
-        serviceIds: quota
-          .data()
-          .serviceIds.filter((serviceId: string) => serviceId !== id),
-        updatedAt: serverTimestamp(),
-      });
     for (const [index, request] of requests.docs.entries()) {
       if (
         history[index].exists() &&
@@ -413,9 +440,18 @@ export async function deleteProvider(db: Firestore, id: string) {
     }
     if (archive.exists()) transaction.delete(archiveRef);
     transaction.delete(slotRef);
+    if (ownerId)
+      transaction.set(doc(collection(db, 'photoServiceCleanupJobs')), {
+        providerId: id,
+        ownerId,
+        reason: 'delete',
+        state: 'pending',
+        createdAt: serverTimestamp(),
+      });
     transaction.delete(providerRef);
   });
 }
+
 export async function resolveReport(
   db: Firestore,
   reviewerId: string,
@@ -431,5 +467,216 @@ export async function resolveReport(
       closedAt: serverTimestamp(),
       closedBy: reviewerId,
     });
+  });
+}
+
+export async function fetchAdminService(
+  db: Firestore,
+  id: string,
+): Promise<PublishedService | null> {
+  const providerRef = reference(db, 'providers', id);
+  const archiveRef = reference(db, 'archivedProviders', id);
+  const [provider, archive] = await Promise.all([
+    readWithDeadline(getDocFromServer(providerRef)),
+    readWithDeadline(getDocFromServer(archiveRef)),
+  ]);
+  if (provider.exists()) {
+    const data = provider.data();
+    if (typeof data.ownerId !== 'string')
+      throw new Error('في بيانات مش صحيحة في الخدمة. راجعها وجرّب تاني.');
+    return {
+      ...mapOwnedProvider(provider.id, data, data.ownerId),
+      ...(data.claimable !== undefined
+        ? { claimable: Boolean(data.claimable) }
+        : {}),
+      publicationStatus: 'published',
+    };
+  }
+  if (archive.exists() && archive.data().archiveStatus === 'unpublished') {
+    const data = archive.data();
+    if (typeof data.ownerId !== 'string')
+      throw new Error('في بيانات مش صحيحة في الخدمة. راجعها وجرّب تاني.');
+    return {
+      ...mapArchivedProvider(archive.id, data, data.ownerId),
+      ...(data.claimable !== undefined
+        ? { claimable: Boolean(data.claimable) }
+        : {}),
+      publicationStatus: 'unpublished',
+    };
+  }
+  return null;
+}
+
+export async function saveAdminProvider(
+  db: Firestore,
+  adminUid: string,
+  values: ServiceValues,
+  id?: string,
+  submissionId?: string,
+): Promise<string> {
+  reference(db, 'users', adminUid);
+  if (Object.keys(validateAvailability(values, true)).length)
+    throw new Error('راجع طريقة تقديم الخدمة والمواعيد.');
+  const stored = toStoredValues(values);
+  const publicValues = publicProjection(stored);
+  const seed = submissionId
+    ? reference(db, 'serviceRequests', submissionId).id
+    : doc(collection(db, 'serviceRequests')).id;
+  const providerId = id
+    ? reference(db, 'providers', id).id
+    : `provider-${seed}`;
+  const providerRef = reference(db, 'providers', providerId);
+  const archiveRef = reference(db, 'archivedProviders', providerId);
+  const slotRef = reference(db, 'requestSlots', providerId);
+  const categoryRef = reference(db, 'categories', stored.categoryId);
+  await runTransaction(db, async (transaction) => {
+    const [provider, archive, slot, category] = await Promise.all([
+      transaction.get(providerRef),
+      transaction.get(archiveRef),
+      transaction.get(slotRef),
+      transaction.get(categoryRef),
+    ]);
+    const requestId: unknown = slot.exists()
+      ? slot.data().requestId
+      : undefined;
+    const pendingRef =
+      typeof requestId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(requestId)
+        ? reference(db, 'serviceRequests', requestId)
+        : null;
+    const pending = pendingRef ? await transaction.get(pendingRef) : null;
+    if (!category.exists() || category.data().active !== true)
+      throw new Error('القسم ده غير متاح حاليًا. اختار قسم تاني.');
+    if (!id) {
+      if (provider.exists()) {
+        if (provider.data().ownerId !== adminUid)
+          throw new Error('معرّف الخدمة مستخدم بالفعل. جرّب تاني.');
+        const current = provider.data();
+        transaction.set(providerRef, {
+          ...publicValues,
+          ...(current.placePhoto ? { placePhoto: current.placePhoto } : {}),
+          ...(current.location ? { location: current.location } : {}),
+          ...(current.lastConfirmedAt
+            ? { lastConfirmedAt: current.lastConfirmedAt }
+            : {}),
+          ownerId: adminUid,
+          publishedAt: current.publishedAt ?? serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        return;
+      }
+      if (archive.exists() && archive.data().archiveStatus === 'unpublished')
+        throw new Error('الخدمة دي موجودة في الأرشيف.');
+      transaction.set(providerRef, {
+        ...publicValues,
+        ownerId: adminUid,
+        claimable: true,
+        publishedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return;
+    }
+    const removePhotoInline =
+      values.photoChange?.action === 'remove' && !getPhotoApiUrl();
+    if (provider.exists()) {
+      const current = provider.data();
+      transaction.set(providerRef, {
+        ...publicValues,
+        ...(current.placePhoto && !removePhotoInline
+          ? { placePhoto: current.placePhoto }
+          : {}),
+        ...(current.location ? { location: current.location } : {}),
+        ...(current.lastConfirmedAt
+          ? { lastConfirmedAt: current.lastConfirmedAt }
+          : {}),
+        ...(current.claimable !== undefined
+          ? { claimable: Boolean(current.claimable) }
+          : current.ownerId === adminUid &&
+              (!slot.exists() || slot.data().ownerId === adminUid)
+            ? { claimable: true }
+            : {}),
+        ownerId: current.ownerId,
+        publishedAt: current.publishedAt,
+        updatedAt: serverTimestamp(),
+      });
+    } else if (
+      archive.exists() &&
+      archive.data().archiveStatus === 'unpublished'
+    ) {
+      const current = archive.data();
+      transaction.set(archiveRef, {
+        ...publicValues,
+        ...(current.placePhoto && !removePhotoInline
+          ? { placePhoto: current.placePhoto }
+          : {}),
+        ...(current.location ? { location: current.location } : {}),
+        ...(current.claimable !== undefined
+          ? { claimable: Boolean(current.claimable) }
+          : {}),
+        ownerId: current.ownerId,
+        publishedAt: current.publishedAt,
+        archiveStatus: 'unpublished',
+        unpublishReason: current.unpublishReason,
+        unpublishedAt: current.unpublishedAt,
+        unpublishedBy: current.unpublishedBy,
+      });
+    } else {
+      throw new Error('الخدمة دي مش موجودة أو اتحذفت. حدّث القائمة.');
+    }
+    if (
+      pending?.exists() &&
+      pending.data().status === 'pending' &&
+      pendingRef
+    ) {
+      transaction.update(pendingRef, {
+        status: 'rejected',
+        rejectionReason: 'تم تحديث بيانات الخدمة مباشرة بواسطة مشرف الدليل.',
+        reviewedBy: adminUid,
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  });
+  if (
+    getPhotoApiUrl() &&
+    values.photoChange &&
+    (values.photoChange.action === 'replace' ||
+      values.photoChange.action === 'remove')
+  ) {
+    await photoRequest(
+      `/v1/photos/services/${encodeURIComponent(providerId)}/photo`,
+      {
+        method: 'POST',
+        body: JSON.stringify(values.photoChange),
+      },
+    );
+  }
+  return providerId;
+}
+
+export async function hasRecoverableServicePhoto(
+  db: Firestore,
+  id: string,
+): Promise<boolean> {
+  const providerRef = reference(db, 'providers', id);
+  const archiveRef = reference(db, 'archivedProviders', id);
+  const [provider, archive] = await Promise.all([
+    readWithDeadline(getDocFromServer(providerRef)),
+    readWithDeadline(getDocFromServer(archiveRef)),
+  ]);
+  return Boolean(
+    provider.exists() &&
+    !('placePhoto' in provider.data()) &&
+    archive.exists() &&
+    archive.data().archiveStatus === 'restored' &&
+    archive.data().placePhoto,
+  );
+}
+
+export async function retryRestoreServicePhoto(id: string): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id))
+    throw new Error('مش قادرين نفتح البيانات دي. حدّث الصفحة وجرّب تاني.');
+  if (!getPhotoApiUrl()) throw new Error('صور الخدمات مش متاحة حاليًا.');
+  await photoRequest(`/v1/photos/services/${encodeURIComponent(id)}/restore`, {
+    method: 'POST',
   });
 }

@@ -19,8 +19,8 @@ export function CommunityArtwork({
   const id = useId();
   const skyId = `${id}-sky`;
   const landId = `${id}-land`;
-  const blue = dark ? '#83B8D6' : '#5489A7';
-  const sand = dark ? '#9B8265' : '#D9B98F';
+  const blue = dark ? '#6FC5D0' : '#5489A7';
+  const sand = dark ? '#B69B72' : '#D9B98F';
   return (
     <Svg
       width="100%"
@@ -31,9 +31,9 @@ export function CommunityArtwork({
     >
       <Defs>
         <LinearGradient id={skyId} x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor={dark ? '#203746' : '#E1F1FC'} />
-          <Stop offset=".55" stopColor={dark ? '#293C45' : '#F8F3EA'} />
-          <Stop offset="1" stopColor={dark ? '#203746' : '#E6F2FA'} />
+          <Stop offset="0" stopColor={dark ? '#163D47' : '#E1F1FC'} />
+          <Stop offset="55%" stopColor={dark ? '#1B414A' : '#F8F3EA'} />
+          <Stop offset="1" stopColor={dark ? '#122E38' : '#E6F2FA'} />
         </LinearGradient>
         <LinearGradient id={landId} x1="0" y1="0" x2="1" y2="1">
           <Stop offset="0" stopColor={blue} stopOpacity=".65" />
@@ -90,8 +90,8 @@ export function CommunityArtwork({
           />
           <Path
             d="M0 113Q64 137 145 116T283 120T420 118"
-            stroke="#E6F2F8"
-            strokeWidth="2"
+            stroke={dark ? '#6FC5D0' : '#7CAEC1'}
+            strokeWidth="1.8"
             fill="none"
           />
         </>

@@ -31,6 +31,7 @@ import {
 } from '../../features/provider/MyServiceCard';
 import { useSupportActions } from '../../features/support/useSupportActions';
 import { useProviderState } from '../../features/provider/ProviderContext';
+import { MyServiceClaimsBanner } from '../../features/claims/MyServiceClaimsBanner';
 import type { ThemeColors } from '../../theme/colors';
 import { useAppTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import { spacing } from '../../theme/spacing';
@@ -47,7 +48,7 @@ const reviewFilters: { id: ReviewStatus | 'all'; label: string }[] = [
   { id: 'needs-edit', label: 'تحتاج تعديل' },
 ];
 export default function MyServicesScreen() {
-  const { compact, ...headerScroll } = useCompactHeader();
+  const { compact, scrollY, ...headerScroll } = useCompactHeader();
   const [screenHeight, setScreenHeight] = useState(0);
   const styles = useThemedStyles(createStyles);
   const { colors } = useAppTheme();
@@ -122,6 +123,7 @@ export default function MyServicesScreen() {
     >
       <CommunityHeader
         compact={compact}
+        scrollY={scrollY}
         signedIn={Boolean(userId)}
         pageTitle="خدماتي"
         onAccount={() => (userId ? router.push('/account/profile') : signIn())}
@@ -254,6 +256,7 @@ export default function MyServicesScreen() {
                     <Text style={styles.primaryText}>إضافة خدمة</Text>
                   </Pressable>
                 </View>
+                <MyServiceClaimsBanner />
                 <View style={styles.listHeading}>
                   <Text accessibilityRole="header" style={styles.overviewTitle}>
                     خدماتي ({listings.length.toLocaleString('ar-EG')})
@@ -429,6 +432,12 @@ export default function MyServicesScreen() {
                         سبب الرفض: {request.rejectionReason}
                       </Text>
                     ) : null}
+                    {request.photoReviewStatus === 'rejected' &&
+                    request.photoReviewReason ? (
+                      <Text style={styles.body}>
+                        سبب رفض الصورة: {request.photoReviewReason}
+                      </Text>
+                    ) : null}
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={`خلاص تمام — ${request.proposedData.name}`}
@@ -486,17 +495,13 @@ export default function MyServicesScreen() {
                   ? publicationFilters
                   : reviewFilters;
                 return (
-                  <View key={dimension}>
+                  <View key={dimension} style={styles.filterGroup}>
                     <Text style={styles.filterHeading}>
                       {publication
                         ? 'حالة النشر في الدليل'
                         : 'حالة طلب المراجعة'}
                     </Text>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.filters}
-                    >
+                    <View style={styles.filters}>
                       {filters.map((filter) => {
                         const selected =
                           (publication ? publicationFilter : reviewFilter) ===
@@ -541,6 +546,14 @@ export default function MyServicesScreen() {
                               selected && styles.filterSelected,
                             ]}
                           >
+                            {selected ? (
+                              <MaterialCommunityIcons
+                                name="check"
+                                size={18}
+                                color={colors.onPrimary}
+                                accessibilityElementsHidden
+                              />
+                            ) : null}
                             <Text
                               style={[
                                 styles.filterText,
@@ -552,10 +565,19 @@ export default function MyServicesScreen() {
                           </Pressable>
                         );
                       })}
-                    </ScrollView>
+                    </View>
                   </View>
                 );
               })}
+              <Pressable
+                accessibilityRole="button"
+                style={[styles.secondary, styles.filterSelected]}
+                onPress={() => setFiltersOpen(false)}
+              >
+                <Text style={[styles.link, styles.filterTextSelected]}>
+                  عرض النتائج
+                </Text>
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 style={styles.secondary}
@@ -656,7 +678,20 @@ const createStyles = (colors: ThemeColors) =>
       writingDirection: 'rtl',
       textAlign: 'auto',
     },
-    filters: { gap: spacing.sm, paddingVertical: spacing.xs },
+    filterGroup: {
+      padding: spacing.md,
+      gap: spacing.sm,
+      borderRadius: 24,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    filters: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
     filter: {
       minHeight: 48,
       paddingHorizontal: spacing.md,

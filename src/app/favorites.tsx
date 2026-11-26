@@ -1,4 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import {
+  PhotoViewportProvider,
+  usePhotoScroll,
+} from '../features/photos/PhotoViewport';
 import { MotionPressable as Pressable } from '../components/ui/Motion';
 import type { ThemeColors } from '../theme/colors';
 import { typography } from '../theme/typography';
@@ -18,6 +22,14 @@ import { ProviderAction } from '../features/provider/ProviderPage';
 import { useFeedback } from '../components/ui/Feedback';
 import { useAppTheme, useThemedStyles } from '../theme/ThemeProvider';
 export default function FavoritesScreen() {
+  return (
+    <PhotoViewportProvider>
+      <FavoritesScreenContent />
+    </PhotoViewportProvider>
+  );
+}
+function FavoritesScreenContent() {
+  const photoScroll = usePhotoScroll();
   const local = useLocalDirectory();
   const feedback = useFeedback();
   const { colors } = useAppTheme();
@@ -52,8 +64,10 @@ export default function FavoritesScreen() {
       edges={['top']}
       style={{ flex: 1, backgroundColor: colors.background }}
     >
-      <BackHeader title="المحفوظات" />
+      <BackHeader title="المفضلة" />
       <ScrollView
+        onScroll={photoScroll}
+        scrollEventThrottle={100}
         contentContainerStyle={{
           padding: 16,
           paddingBottom: 16 + insets.bottom,
@@ -74,7 +88,7 @@ export default function FavoritesScreen() {
               خدمات تحب ترجع لها
             </Text>
             <Text style={styles.description}>
-              كل خدماتك المحفوظة في مكان واحد، وقت ما تحتاجها.
+              كل خدماتك المفضلة في مكان واحد، وقت ما تحتاجها.
             </Text>
           </View>
         </View>
@@ -91,13 +105,13 @@ export default function FavoritesScreen() {
             accessibilityRole="alert"
             style={{ ...typography.body, color: colors.textSecondary }}
           >
-            مش قادرين نحدّث المحفوظات. البيانات المحفوظة ممكن تكون اتغيّرت.
+            مش قادرين نحدّث المفضلة. البيانات المحفوظة ممكن تكون اتغيّرت.
           </Text>
         ) : null}
         {local.favoriteIds.length ? (
           <View style={styles.toolbar}>
             <Text accessibilityRole="header" style={styles.sectionTitle}>
-              الخدمات المحفوظة{' '}
+              الخدمات المفضلة{' '}
               <Text style={styles.count}>
                 ({local.favoriteIds.length.toLocaleString('ar-EG')})
               </Text>
@@ -105,7 +119,7 @@ export default function FavoritesScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={
-                refreshing ? 'بنحدّث المحفوظات...' : 'تحديث المحفوظات'
+                refreshing ? 'بنحدّث المفضلة...' : 'تحديث المفضلة'
               }
               accessibilityState={{ busy: refreshing }}
               disabled={!db || refreshing || !local.hydrated}
@@ -134,11 +148,11 @@ export default function FavoritesScreen() {
               />
             </View>
             <Text accessibilityRole="header" style={styles.emptyTitle}>
-              خدماتك المفضلة تبدأ من هنا
+              لسه مفيش خدمات في المفضلة
             </Text>
             <Text style={styles.emptyDescription}>
-              احفظ الخدمة اللي تهمك بعلامة الحفظ، وهتلاقيها هنا بسهولة لما تحتاج
-              تتواصل مع صاحبها.
+              اضغط على علامة القلب في أي خدمة تهمك، وهتلاقيها هنا على طول وقت ما
+              تحتاج تتواصل مع صاحبها.
             </Text>
             <ProviderAction
               title="استكشف الخدمات"
@@ -165,10 +179,10 @@ export default function FavoritesScreen() {
               <Text style={{ ...typography.body, color: colors.textPrimary }}>
                 {local.unavailableIds.includes(id)
                   ? 'الخدمة دي مش متاحة دلوقتي.'
-                  : 'البيانات المحفوظة مش موجودة أو انتهت. اتصل بالإنترنت وحدّث المحفوظات.'}
+                  : 'البيانات المحفوظة مش موجودة أو خلصت مدتها. اتأكد من الإنترنت وحدّث المفضلة.'}
               </Text>
               <ProviderAction
-                title="إزالة من المحفوظات"
+                title="شيلها من المفضلة"
                 onPress={() => local.toggleFavorite(id)}
               />
             </View>
@@ -177,11 +191,11 @@ export default function FavoritesScreen() {
         {local.favoriteIds.length ? (
           <ProviderAction
             secondary
-            title="مسح المحفوظات"
+            title="مسح المفضلة"
             onPress={() =>
               feedback.show(
-                'مسح المحفوظات؟',
-                'هيتم مسح قائمة المحفوظات من الجهاز ده.',
+                'تمسح المفضلة؟',
+                'كل الخدمات اللي في المفضلة هتتمسح من الجهاز ده.',
                 [
                   { text: 'إلغاء', style: 'cancel' },
                   {

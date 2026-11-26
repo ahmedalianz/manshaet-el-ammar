@@ -10,13 +10,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AccountMenuRow } from '../../features/account/AccountMenuRow';
 import { ProviderAction } from '../../features/provider/ProviderPage';
 import { useProviderState } from '../../features/provider/ProviderContext';
+import { useAdminClaims } from '../../features/claims/useServiceClaims';
 import type { ThemeColors } from '../../theme/colors';
 import { useAppTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import { spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 
 export default function MoreScreen() {
-  const { compact, ...headerScroll } = useCompactHeader();
+  const { compact, scrollY, ...headerScroll } = useCompactHeader();
   const styles = useThemedStyles(createStyles);
   const { colors } = useAppTheme();
   const feedback = useFeedback();
@@ -29,6 +30,7 @@ export default function MoreScreen() {
     moderationEnabled,
     listings,
   } = useProviderState();
+  const { claims: pendingClaims } = useAdminClaims('pending');
   const signIn = () =>
     router.push({ pathname: '/provider/sign-in', params: { next: 'more' } });
   const profile = () => router.push('/account/profile');
@@ -54,6 +56,7 @@ export default function MoreScreen() {
     <SafeAreaView edges={['top']} style={styles.screen}>
       <CommunityHeader
         compact={compact}
+        scrollY={scrollY}
         signedIn={Boolean(userId)}
         pageTitle="المزيد"
         onAccount={userId ? profile : signIn}
@@ -149,10 +152,23 @@ export default function MoreScreen() {
               <AccountMenuRow
                 grouped
                 title="إدارة الخدمات"
-                subtitle="مراجعة الطلبات والخدمات المنشورة والبلاغات"
+                subtitle="مراجعة الطلبات ونقل الملكية والخدمات والبلاغات"
                 icon="clipboard-check-outline"
-                badge={pendingRequests.length}
+                badge={pendingRequests.length + pendingClaims.length}
                 onPress={() => router.push('/admin')}
+              />
+              <View style={styles.divider} />
+              <AccountMenuRow
+                grouped
+                title="إضافة خدمة جديدة"
+                subtitle="نشر خدمة مباشرة في الدليل بدون حد أقصى"
+                icon="plus-circle-outline"
+                onPress={() =>
+                  router.push({
+                    pathname: '/provider/add',
+                    params: { from: 'admin' },
+                  })
+                }
               />
             </View>
           </View>
@@ -208,7 +224,7 @@ export default function MoreScreen() {
         <View style={styles.menuGroup}>
           <AccountMenuRow
             grouped
-            title="المحفوظات"
+            title="المفضلة"
             icon="bookmark-outline"
             onPress={() => router.push('/favorites')}
           />
@@ -229,16 +245,6 @@ export default function MoreScreen() {
             />
           ) : null}
         </View>
-        {userId ? (
-          <View style={styles.menuGroup}>
-            <AccountMenuRow
-              grouped
-              title="مسودات الخدمات"
-              icon="file-document-edit-outline"
-              onPress={() => router.push('/provider/drafts')}
-            />
-          </View>
-        ) : null}
         <AppearanceSetting />
         {userId ? (
           <View style={[styles.menuGroup, styles.logoutCard]}>

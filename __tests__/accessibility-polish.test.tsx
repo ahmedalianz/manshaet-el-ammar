@@ -93,13 +93,13 @@ describe('wrapping and accessible state labels', () => {
   it('retains error announcements and LTR phone input without disabling scaling', async () => {
     await render(
       <FormField
-        label="رقم الموبايل"
+        label="رقم التواصل"
         value="01012345678"
         phone
         error="راجع الرقم"
       />,
     );
-    const input = screen.getByLabelText('رقم الموبايل');
+    const input = screen.getByLabelText('رقم التواصل');
     expect(input.props.textAlign).toBe('left');
     expect(input.props.allowFontScaling).not.toBe(false);
     expect(screen.getByText('راجع الرقم').props.accessibilityLiveRegion).toBe(

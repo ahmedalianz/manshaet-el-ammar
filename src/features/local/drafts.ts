@@ -1,6 +1,10 @@
+import { deleteDraftPhoto } from '../photos/draftFiles';
+import { validPhotoDraft } from '../photos/draftValidation';
+import type { PhotoDraft } from '../photos/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ServiceValues } from '../provider/types';
 export type ServiceDraft = {
+  photoDraft?: PhotoDraft;
   values: ServiceValues;
   step: 1 | 2;
   sameNumber: boolean;
@@ -35,6 +39,7 @@ export async function readDraft(
     delete value.area;
     delete value.areaId;
     delete value.areadId;
+    delete value.coverageAreas;
     if (
       ![
         'name',
@@ -54,12 +59,6 @@ export async function readDraft(
     if (
       value.serviceMode !== undefined &&
       !['fixed', 'mobile', 'both'].includes(value.serviceMode)
-    )
-      return null;
-    if (
-      value.coverageAreas !== undefined &&
-      (!Array.isArray(value.coverageAreas) ||
-        value.coverageAreas.some((area: unknown) => typeof area !== 'string'))
     )
       return null;
     if (value.weeklyHours !== undefined) {
@@ -98,6 +97,9 @@ export async function readDraft(
     }
     const clean: ServiceDraft = {
       values: value,
+      ...(validPhotoDraft(draft.photoDraft)
+        ? { photoDraft: draft.photoDraft }
+        : {}),
       step: draft.step,
       sameNumber: draft.sameNumber,
       savedAt: draft.savedAt,
@@ -125,10 +127,10 @@ export function saveDraft(
     whatsapp,
     address,
     serviceMode,
-    coverageAreas,
     weeklyHours,
   } = draft.values;
   const clean: ServiceDraft = {
+    ...(draft.photoDraft ? { photoDraft: draft.photoDraft } : {}),
     values: {
       name,
       categoryId,
@@ -138,7 +140,6 @@ export function saveDraft(
       whatsapp,
       address,
       serviceMode,
-      coverageAreas,
       weeklyHours,
     },
     step: draft.step,
@@ -149,15 +150,44 @@ export function saveDraft(
   queue = queue
     .catch(() => {})
     .then(async () => {
-      if (expectedEpoch === draftEpoch(uid))
-        await AsyncStorage.setItem(storageKey(uid, key), JSON.stringify(clean));
+      if (expectedEpoch === draftEpoch(uid)) {
+        const targetKey = storageKey(uid, key);
+        const prefix = `${PREFIX}${encodeURIComponent(uid)}.`;
+        const previous = await AsyncStorage.getItem(targetKey);
+        await AsyncStorage.setItem(targetKey, JSON.stringify(clean));
+        removePhotoFile(previous, clean.photoDraft?.localUri);
+        const otherKeys = (await AsyncStorage.getAllKeys()).filter(
+          (candidate) =>
+            candidate.startsWith(prefix) && candidate !== targetKey,
+        );
+        if (otherKeys.length) {
+          for (const otherKey of otherKeys) {
+            removePhotoFile(
+              await AsyncStorage.getItem(otherKey),
+              clean.photoDraft?.localUri,
+            );
+          }
+          await AsyncStorage.multiRemove(otherKeys);
+        }
+      }
     });
   return queue;
+}
+function removePhotoFile(raw: string | null, keepUri?: string) {
+  if (!raw) return;
+  try {
+    const uri = JSON.parse(raw)?.photoDraft?.localUri;
+    if (typeof uri === 'string' && uri !== keepUri) deleteDraftPhoto(uri);
+  } catch {}
 }
 export function discardDraft(uid: string, key: string) {
   queue = queue
     .catch(() => {})
-    .then(() => AsyncStorage.removeItem(storageKey(uid, key)));
+    .then(async () => {
+      const raw = await AsyncStorage.getItem(storageKey(uid, key));
+      removePhotoFile(raw);
+      await AsyncStorage.removeItem(storageKey(uid, key));
+    });
   return queue;
 }
 export function clearUserDrafts(uid: string) {
@@ -168,7 +198,11 @@ export function clearUserDrafts(uid: string) {
       const keys = (await AsyncStorage.getAllKeys()).filter((key) =>
         key.startsWith(`${PREFIX}${encodeURIComponent(uid)}.`),
       );
-      if (keys.length) await AsyncStorage.multiRemove(keys);
+      if (keys.length) {
+        for (const key of keys)
+          removePhotoFile(await AsyncStorage.getItem(key));
+        await AsyncStorage.multiRemove(keys);
+      }
     });
   return queue;
 }

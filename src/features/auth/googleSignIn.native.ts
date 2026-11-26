@@ -1,11 +1,13 @@
 import {
   GoogleAuthProvider,
+  reauthenticateWithCredential,
   signInWithCredential,
   type Auth,
+  type User,
   type UserCredential,
 } from '@firebase/auth';
 
-export async function googleSignIn(auth: Auth): Promise<UserCredential | null> {
+function getConfiguredGoogleSignIn() {
   const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
   if (!webClientId)
     throw Object.assign(new Error('Google client is not configured'), {
@@ -27,10 +29,15 @@ export async function googleSignIn(auth: Auth): Promise<UserCredential | null> {
     webClientId,
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
   });
-  await google.GoogleSignin.hasPlayServices({
+  return google.GoogleSignin;
+}
+
+export async function googleSignIn(auth: Auth): Promise<UserCredential | null> {
+  const googleSignInClient = getConfiguredGoogleSignIn();
+  await googleSignInClient.hasPlayServices({
     showPlayServicesUpdateDialog: true,
   });
-  const response = await google.GoogleSignin.signIn();
+  const response = await googleSignInClient.signIn();
   if (response.type === 'cancelled') return null;
   const token = response.data.idToken;
   if (!token)
@@ -38,4 +45,34 @@ export async function googleSignIn(auth: Auth): Promise<UserCredential | null> {
       code: 'auth/invalid-credential',
     });
   return signInWithCredential(auth, GoogleAuthProvider.credential(token));
+}
+
+export async function reauthenticateGoogle(
+  user: User,
+): Promise<UserCredential | null> {
+  const googleSignInClient = getConfiguredGoogleSignIn();
+  await googleSignInClient.hasPlayServices({
+    showPlayServicesUpdateDialog: true,
+  });
+  await googleSignInClient.signOut().catch(() => {});
+  const response = await googleSignInClient.signIn();
+  if (response.type === 'cancelled') return null;
+  const token = response.data.idToken;
+  if (!token)
+    throw Object.assign(new Error('Google did not return an ID token'), {
+      code: 'auth/invalid-credential',
+    });
+  return reauthenticateWithCredential(
+    user,
+    GoogleAuthProvider.credential(token),
+  );
+}
+
+export async function googleSignOut(): Promise<void> {
+  try {
+    const googleSignInClient = getConfiguredGoogleSignIn();
+    await googleSignInClient.signOut().catch(() => {});
+  } catch {
+    /* Native module or Google config may be unavailable for email/password sessions. */
+  }
 }

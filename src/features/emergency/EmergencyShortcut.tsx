@@ -6,16 +6,18 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { router } from 'expo-router';
 import Svg, { Defs, LinearGradient, Stop, Rect, Path } from 'react-native-svg';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { MotionPressable as Pressable } from '../../components/ui/Motion';
 import { useAppTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { ThemeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { emergencyNumbers } from './numbers';
 
 export function EmergencyShortcut() {
   const gradientId = useId();
-  const { resolved } = useAppTheme();
+  const { colors, resolved } = useAppTheme();
   const isDark = resolved === 'dark';
   const { width, fontScale } = useWindowDimensions();
   const stacked = width / fontScale < 270;
@@ -40,7 +42,12 @@ export function EmergencyShortcut() {
     }
   };
   return (
-    <View style={styles.card}>
+    <Pressable
+      testID="emergency-shortcut-card"
+      accessible={false}
+      onPress={() => router.push('/emergency')}
+      style={styles.card}
+    >
       <View
         pointerEvents="none"
         accessibilityElementsHidden
@@ -55,34 +62,59 @@ export function EmergencyShortcut() {
           accessible={false}
         >
           <Defs>
-            <LinearGradient id={gradientId} x1="0" y1="0" x2=".8" y2="1">
-              <Stop offset="0" stopColor={isDark ? '#4C1720' : '#741E28'} />
-              <Stop offset=".6" stopColor={isDark ? '#64212C' : '#96313A'} />
-              <Stop offset="1" stopColor={isDark ? '#421923' : '#76232E'} />
+            <LinearGradient id={gradientId} x1="0" y1="0" x2="80%" y2="1">
+              <Stop offset="0" stopColor={isDark ? '#3E423B' : '#FFF0D9'} />
+              <Stop offset="60%" stopColor={isDark ? '#253640' : '#FFF9EF'} />
+              <Stop offset="1" stopColor={isDark ? '#1B2D36' : '#F7F0E5'} />
             </LinearGradient>
           </Defs>
           <Rect width="400" height="200" fill={`url(#${gradientId})`} />
           <Path
-            d="M0 68Q60 12 148 0H0ZM218 200Q303 130 400 155V200Z"
-            fill="#FFFFFF"
-            opacity=".07"
+            d="M0 46Q94 35 211 0H0Z"
+            fill={isDark ? '#F0C382' : '#D8A65F'}
+            opacity=".12"
+          />
+          <Path
+            d="M0 46Q94 35 211 0"
+            stroke={colors.warning}
+            strokeWidth="1"
+            fill="none"
+            opacity=".45"
           />
         </Svg>
       </View>
-      <View style={styles.heading}>
-        <MaterialCommunityIcons
-          name="alarm-light-outline"
-          size={32}
-          color="#FFE1D7"
-          accessibilityElementsHidden
-        />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="عرض كل أرقام الطوارئ في مصر ومركز طوخ"
+        onPress={(event) => {
+          event?.stopPropagation();
+          router.push('/emergency');
+        }}
+        style={styles.heading}
+      >
+        <View style={styles.headingIcon}>
+          <MaterialCommunityIcons
+            name="alarm-light-outline"
+            size={30}
+            color={colors.warning}
+            accessibilityElementsHidden
+          />
+        </View>
         <View style={styles.headingCopy}>
           <Text accessibilityRole="header" style={styles.title}>
             أرقام الطوارئ في مصر
           </Text>
-          <Text style={styles.subtitle}>للحالات العاجلة على مدار الساعة</Text>
+          <Text style={styles.subtitle}>أرقام سريعة للمساعدة وقت الحاجة</Text>
         </View>
-      </View>
+        <View style={styles.arrowBadge} accessibilityElementsHidden>
+          <MaterialCommunityIcons
+            name="chevron-left"
+            size={22}
+            color={colors.warning}
+            accessibilityElementsHidden
+          />
+        </View>
+      </Pressable>
       <View style={[styles.numbers, stacked && styles.stacked]}>
         {emergencyNumbers.map((item) => (
           <Pressable
@@ -91,13 +123,16 @@ export function EmergencyShortcut() {
             accessibilityLabel={`اتصل ب${item.label} على ${item.number}`}
             accessibilityHint="بيفتح تطبيق الاتصال بالرقم ده"
             disabled={busy}
-            onPress={() => void open(item.number)}
+            onPress={(event) => {
+              event?.stopPropagation();
+              void open(item.number);
+            }}
             style={[styles.numberButton, stacked && styles.stackedButton]}
           >
             <MaterialCommunityIcons
               name={item.icon}
               size={25}
-              color="#BA1A1A"
+              color={colors.warning}
               accessibilityElementsHidden
             />
             <Text style={styles.label}>{item.label}</Text>
@@ -105,7 +140,7 @@ export function EmergencyShortcut() {
               <MaterialCommunityIcons
                 name="phone-outline"
                 size={15}
-                color="#BA1A1A"
+                color={colors.warning}
                 accessibilityElementsHidden
               />
               <Text style={styles.number}>{item.number}</Text>
@@ -123,58 +158,81 @@ export function EmergencyShortcut() {
           {error}
         </Text>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
-const createStyles = () =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     card: {
-      padding: 14,
-      gap: 14,
-      borderRadius: 22,
+      padding: 16,
+      gap: 18,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: colors.warning,
       overflow: 'hidden',
-      backgroundColor: '#741E28',
+      backgroundColor: colors.surfaceLow,
     },
-    heading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    headingCopy: { flex: 1, gap: 2 },
+    heading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    headingIcon: {
+      width: 52,
+      height: 52,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.warning,
+      backgroundColor: colors.pendingBackground,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headingCopy: { flex: 1, minWidth: 0, gap: 4 },
+    arrowBadge: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.warning,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     subtitle: {
       ...typography.caption,
-      color: '#FFF2EE',
+      color: colors.textSecondary,
       writingDirection: 'rtl',
       textAlign: 'auto',
     },
     title: {
       ...typography.sectionTitle,
-      color: '#FFFFFF',
+      color: colors.warning,
       textAlign: 'auto',
       writingDirection: 'rtl',
     },
-    numbers: { flexDirection: 'row', gap: 8 },
+    numbers: { flexDirection: 'row', gap: 10 },
     stacked: { flexDirection: 'column' },
     stackedButton: { flex: 0, width: '100%' },
     numberButton: {
       flex: 1,
       minWidth: 0,
-      minHeight: 110,
-      padding: 8,
-      gap: 2,
+      minHeight: 116,
+      paddingHorizontal: 6,
+      paddingVertical: 12,
+      gap: 4,
       borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: '#FFF9F7',
+      backgroundColor: colors.surface,
       borderWidth: 1,
-      borderColor: '#FFFFFF',
+      borderColor: colors.border,
     },
     label: {
       ...typography.label,
       fontSize: 14,
-      color: '#BA1A1A',
+      color: colors.warning,
       textAlign: 'center',
     },
     number: {
       ...typography.sectionTitle,
       fontSize: 26,
-      color: '#183545',
+      color: colors.textPrimary,
       textAlign: 'center',
       writingDirection: 'ltr',
     },
@@ -186,7 +244,7 @@ const createStyles = () =>
     },
     error: {
       ...typography.body,
-      color: '#FFFFFF',
+      color: colors.textPrimary,
       textAlign: 'auto',
       writingDirection: 'rtl',
     },

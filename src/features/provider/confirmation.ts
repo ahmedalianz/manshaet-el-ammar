@@ -6,12 +6,23 @@ import {
 } from '@firebase/firestore';
 import { timestampISO } from './firebaseMapping';
 export const CONFIRMATION_INTERVAL_MS = 90 * 24 * 60 * 60 * 1000;
-export function confirmationDue(lastConfirmedAt?: string, now = Date.now()) {
+export function confirmationDue(
+  lastConfirmedAt?: string,
+  now = Date.now(),
+  fallbackAt?: string,
+) {
+  const referenceAt = lastConfirmedAt ?? fallbackAt;
   return (
-    !lastConfirmedAt ||
-    !Number.isFinite(Date.parse(lastConfirmedAt)) ||
-    now - Date.parse(lastConfirmedAt) >= CONFIRMATION_INTERVAL_MS
+    !referenceAt ||
+    !Number.isFinite(Date.parse(referenceAt)) ||
+    now - Date.parse(referenceAt) >= CONFIRMATION_INTERVAL_MS
   );
+}
+export function serviceConfirmationDue(
+  service: { lastConfirmedAt?: string; updatedAt?: string },
+  now = Date.now(),
+) {
+  return confirmationDue(service.lastConfirmedAt, now, service.updatedAt);
 }
 export async function confirmProviderDetails(
   db: Firestore,

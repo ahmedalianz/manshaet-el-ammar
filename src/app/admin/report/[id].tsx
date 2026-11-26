@@ -1,6 +1,7 @@
+import { useAdminService } from '../../../features/admin/useAdminService';
 import { useFeedback } from '../../../components/ui/Feedback';
 import { useThemedStyles } from '../../../theme/ThemeProvider';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import {
   AdminGuard,
@@ -34,9 +35,9 @@ function ReportDetails() {
   const providerStyles = useProviderStyles();
   const feedback = useFeedback();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { reports, services, closeReport, adminBusy } = useProviderState();
+  const { reports, closeReport, adminBusy } = useProviderState();
   const report = reports.find((item) => item.id === id);
-  const service = services.find((item) => item.id === report?.providerId);
+  const { service } = useAdminService(report?.providerId);
   if (!report)
     return (
       <AdminPage title="مراجعة البلاغ">
@@ -81,10 +82,27 @@ function ReportDetails() {
           </Text>
         </View>
         {service ? (
-          <AdminContactButton
-            phone={service.phone}
-            title="اتصال للتأكد من الرقم"
-          />
+          <>
+            <AdminContactButton
+              phone={service.phone}
+              title="اتصال للتأكد من الرقم"
+            />
+            <ProviderAction
+              secondary
+              disabled={Boolean(adminBusy)}
+              title="تعديل بيانات الخدمة"
+              onPress={() =>
+                router.push({
+                  pathname: '/provider/edit/[id]',
+                  params: {
+                    id: service.id,
+                    from: 'admin-report',
+                    reportId: report.id,
+                  },
+                })
+              }
+            />
+          </>
         ) : null}
         {report.status === 'open' ? (
           <ProviderAction

@@ -14,24 +14,11 @@ const period = (start: string, end: string, overnight = false) => ({
   end,
   overnight,
 });
-it('requires explicit modes only at submission and coverage for travelling services', () => {
+it('requires an explicit mode at submission without requiring coverage', () => {
   expect(validateAvailability({}, false)).toEqual({});
   expect(validateAvailability({}, true)).toHaveProperty('serviceMode');
-  expect(validateAvailability({ serviceMode: 'mobile' }, true)).toHaveProperty(
-    'coverageAreas',
-  );
-  expect(
-    validateAvailability(
-      { serviceMode: 'mobile', coverageAreas: ['all'] },
-      true,
-    ),
-  ).toEqual({});
-  expect(
-    validateAvailability(
-      { serviceMode: 'both', coverageAreas: ['all', 'وسط البلد'] },
-      true,
-    ),
-  ).toHaveProperty('coverageAreas');
+  expect(validateAvailability({ serviceMode: 'mobile' }, true)).toEqual({});
+  expect(validateAvailability({ serviceMode: 'both' }, true)).toEqual({});
 });
 it('rejects overlapping periods, including adjacent days and the weekly boundary', () => {
   expect(
@@ -61,7 +48,7 @@ it('rejects overlapping periods, including adjacent days and the weekly boundary
     }),
   ).toBeUndefined();
 });
-it('maps mobile coverage without requiring a private home address, and reads legacy fields', () => {
+it('maps mobile services without requiring a private home address, and reads legacy fields', () => {
   const values = {
     name: 'أحمد',
     categoryId: 'plumbing',
@@ -71,17 +58,21 @@ it('maps mobile coverage without requiring a private home address, and reads leg
 
     address: '',
     serviceMode: 'mobile' as const,
-    coverageAreas: ['all'],
     weeklyHours: { sat: { status: 'closed' as const } },
   };
   expect(fromStoredValues(toStoredValues(values))).toEqual(values);
+  const obsolete = { ...toStoredValues(values), coverageAreas: ['all'] };
+  expect(fromStoredValues(obsolete)).toEqual(values);
+  expect(
+    toStoredValues({ ...values, ...{ coverageAreas: ['all'] } }),
+  ).not.toHaveProperty('coverageAreas');
   expect(
     changedFields(
       { ...values, weeklyHours: { sat: { status: 'closed' } } },
       { ...values, weeklyHours: { sat: { status: 'allDay' } } },
     ),
   ).toContain('weeklyHours');
-  const { serviceMode, coverageAreas, weeklyHours, ...legacy } = values;
+  const { serviceMode, weeklyHours, ...legacy } = values;
   expect(
     fromStoredValues(toStoredValues({ ...legacy, address: 'عنوان' })),
   ).not.toHaveProperty('serviceMode');
@@ -94,5 +85,15 @@ it('reminds at 90 days, never implies automatic unpublishing', () => {
   ).toBe(false);
   expect(
     confirmationDue(new Date(now - 90 * 86400000).toISOString(), now),
+  ).toBe(true);
+  expect(
+    confirmationDue(undefined, now, new Date(now - 5 * 86400000).toISOString()),
+  ).toBe(false);
+  expect(
+    confirmationDue(
+      undefined,
+      now,
+      new Date(now - 90 * 86400000).toISOString(),
+    ),
   ).toBe(true);
 });

@@ -14,6 +14,11 @@ import {
 } from '../src/features/local/drafts';
 import { providerShareText } from '../src/features/local/sharing';
 import type { ServiceProvider } from '../src/features/discovery/types';
+
+const mockDeleteDraftPhoto = jest.fn();
+jest.mock('../src/features/photos/draftFiles', () => ({
+  deleteDraftPhoto: (...args: unknown[]) => mockDeleteDraftPhoto(...args),
+}));
 const provider: ServiceProvider = {
   id: 'p',
   name: 'أحمد',
@@ -22,12 +27,13 @@ const provider: ServiceProvider = {
   description: 'صيانة',
   phone: '01012345678',
 
-  address: 'شارع المدارس',
+  address: 'شارع المدرسة',
   dataSource: 'firestore',
   status: 'approved',
   publicationStatus: 'published',
 };
 beforeEach(async () => {
+  mockDeleteDraftPhoto.mockClear();
   await flushLocalDirectory();
   await AsyncStorage.clear();
   resetLocalDirectory();
@@ -147,17 +153,16 @@ it('shares plain useful details and discloses the date of cached data', () => {
     ...provider,
     serviceMode: 'mobile',
     address: '',
-    coverageAreas: ['all'],
     cachedAt: '2026-11-12T12:00:00Z',
   });
   expect(message).toContain('أحمد');
   expect(message).toContain('سباك');
   expect(message).toContain('01012345678');
-  expect(message).toContain('كل مناطق القرية');
+  expect(message).toContain('خدمة متنقلة');
   expect(message).toContain('بيانات محفوظة بتاريخ');
-  expect(providerShareText(provider)).toContain('شارع المدارس');
+  expect(providerShareText(provider)).toContain('شارع المدرسة');
 });
-it('removes obsolete area fields from restored public cache and rewrites the clean snapshot', async () => {
+it('removes obsolete area and coverage fields from restored public cache and rewrites the clean snapshot', async () => {
   await AsyncStorage.setItem(
     'directory.public.v1',
     JSON.stringify({
@@ -166,12 +171,22 @@ it('removes obsolete area fields from restored public cache and rewrites the cle
         {
           ...provider,
           area: 'old',
+          coverageAreas: ['all'],
           areaId: 'center',
           areadId: 'old-typo',
           cachedAt: new Date().toISOString(),
         },
       ],
-      categories: [],
+      categories: [
+        {
+          id: 'tailoring',
+          name: 'الخياطة والتطريز',
+          description: '',
+          icon: 'needle',
+          group: 'trades',
+          keywords: [],
+        },
+      ],
     }),
   );
   resetLocalDirectory();
@@ -181,11 +196,13 @@ it('removes obsolete area fields from restored public cache and rewrites the cle
   const restored = JSON.parse(
     (await AsyncStorage.getItem('directory.public.v1'))!,
   );
+  expect(restored.categories[0]?.icon).toBe('content-cut');
+  expect(restored.providers[0]).not.toHaveProperty('coverageAreas');
   expect(restored.providers[0]).not.toHaveProperty('areaId');
   expect(restored.providers[0]).not.toHaveProperty('areadId');
   expect(restored.providers[0].address).toBe(provider.address);
 });
-it('recovers old drafts without exposing obsolete area fields and omits them from subsequent saves', async () => {
+it('recovers old drafts without exposing obsolete area and coverage fields and omits them from subsequent saves', async () => {
   const key = 'directory.draft.v1.legacy.new';
   await AsyncStorage.setItem(
     key,
@@ -196,8 +213,9 @@ it('recovers old drafts without exposing obsolete area fields and omits them fro
         serviceTitle: 'سباك',
         description: '',
         phone: '01012345678',
-        address: 'شارع المدارس',
+        address: 'شارع المدرسة',
         area: 'old',
+        coverageAreas: ['all'],
         areaId: 'center',
       },
       step: 1,
@@ -206,11 +224,56 @@ it('recovers old drafts without exposing obsolete area fields and omits them fro
     }),
   );
   const draft = await readDraft('legacy', 'new');
+  expect(draft?.values).not.toHaveProperty('coverageAreas');
   expect(draft?.values).not.toHaveProperty('areaId');
   expect(draft?.values).not.toHaveProperty('area');
-  expect(draft?.values.address).toBe('شارع المدارس');
+  expect(draft?.values.address).toBe('شارع المدرسة');
   await saveDraft('legacy', 'new', draft!);
   expect(
     JSON.parse((await AsyncStorage.getItem(key))!).values,
   ).not.toHaveProperty('areaId');
+});
+
+it('retains only the single most recent draft per user and removes older photo files', async () => {
+  const baseValues = {
+    name: 'محمد',
+    categoryId: 'plumbing',
+    serviceTitle: 'سباك',
+    description: '',
+    phone: '01012345678',
+    address: 'شارع المدرسة',
+  };
+  await saveDraft('owner', 'new', {
+    values: baseValues,
+    photoDraft: {
+      action: 'replace',
+      localUri: 'file:///documents/service-photo-drafts/old.jpg',
+    },
+    step: 1,
+    sameNumber: false,
+    savedAt: '2026-11-19T00:00:00.000Z',
+  });
+  await saveDraft('other', 'new', {
+    values: { ...baseValues, name: 'حساب آخر' },
+    step: 1,
+    sameNumber: false,
+    savedAt: '2026-11-19T00:01:00.000Z',
+  });
+  await saveDraft('owner', 'service-1', {
+    values: { ...baseValues, name: 'أحدث مسودة' },
+    step: 2,
+    sameNumber: true,
+    savedAt: '2026-11-19T00:02:00.000Z',
+  });
+
+  expect(await readDraft('owner', 'new')).toBeNull();
+  const latest = await readDraft('owner', 'service-1');
+  expect(latest?.values.name).toBe('أحدث مسودة');
+  const listed = await listDrafts('owner');
+  expect(listed).toHaveLength(1);
+  expect(listed[0]?.id).toBe('service-1');
+  expect(mockDeleteDraftPhoto).toHaveBeenCalledWith(
+    'file:///documents/service-photo-drafts/old.jpg',
+  );
+  expect((await readDraft('other', 'new'))?.values.name).toBe('حساب آخر');
 });

@@ -1,3 +1,7 @@
+import {
+  PhotoViewportProvider,
+  usePhotoScroll,
+} from '../../features/photos/PhotoViewport';
 import { DeleteServiceAction } from '../../features/admin/AdminUi';
 import { categoryImages } from '../../features/discovery/data/categoryImages';
 import { CommunityArtwork } from '../../components/brand/CommunityArtwork';
@@ -38,6 +42,14 @@ import {
 import { firebaseMessage } from '../../features/auth/errors';
 
 export default function CategoryDetailsScreen() {
+  return (
+    <PhotoViewportProvider>
+      <CategoryDetailsScreenContent />
+    </PhotoViewportProvider>
+  );
+}
+function CategoryDetailsScreenContent() {
+  const photoScroll = usePhotoScroll();
   const styles = useThemedStyles(createStyles);
   const { colors } = useAppTheme();
   const {
@@ -116,7 +128,9 @@ export default function CategoryDetailsScreen() {
         </View>
         <View style={styles.introCopy}>
           <Text accessibilityRole="header" style={styles.introTitle}>
-            خدمات {category.name}
+            {category.name.startsWith('خدمات')
+              ? category.name
+              : `خدمات ${category.name}`}
           </Text>
           <Text style={styles.introDescription}>
             تواصل مع أصحاب الخدمات في منشأة العمار مباشرة، من غير وسيط أو عمولة.
@@ -124,7 +138,6 @@ export default function CategoryDetailsScreen() {
         </View>
       </View>
       <SearchInput
-        containerStyle={styles.directorySearch}
         value={query}
         onChangeText={setQuery}
         placeholder="ابحث بالاسم أو الخدمة أو العنوان..."
@@ -203,6 +216,8 @@ export default function CategoryDetailsScreen() {
           style={{ flex: 1 }}
         >
           <FlatList
+            onScroll={photoScroll}
+            scrollEventThrottle={100}
             refreshing={categoryQuery.isFetching && !categoryQuery.isPending}
             onRefresh={() => {
               void categoryQuery.refetch();
@@ -217,7 +232,7 @@ export default function CategoryDetailsScreen() {
                         listing.id === item.id && listing.ownerId === userId,
                     )
                   : undefined;
-              const canDelete =
+              const isAdmin =
                 role === 'admin' && Boolean(userId) && !initializing;
               return (
                 <ProviderCard
@@ -231,9 +246,9 @@ export default function CategoryDetailsScreen() {
                     })
                   }
                   managementActions={
-                    owned || canDelete ? (
+                    owned || isAdmin ? (
                       <>
-                        {owned ? (
+                        {owned && !isAdmin ? (
                           <ProviderAction
                             secondary
                             title="إدارة خدمتك"
@@ -247,14 +262,30 @@ export default function CategoryDetailsScreen() {
                             }
                           />
                         ) : null}
-                        {canDelete ? (
-                          <DeleteServiceAction
-                            id={item.id}
-                            label="حذف الخدمة"
-                            onDeleted={() => {
-                              void categoryQuery.refetch();
-                            }}
-                          />
+                        {isAdmin ? (
+                          <>
+                            <ProviderAction
+                              secondary
+                              title="تعديل الخدمة"
+                              onPress={() =>
+                                router.push({
+                                  pathname: '/provider/edit/[id]',
+                                  params: {
+                                    id: item.id,
+                                    from: 'category',
+                                    categoryId: category.id,
+                                  },
+                                })
+                              }
+                            />
+                            <DeleteServiceAction
+                              id={item.id}
+                              label="حذف الخدمة"
+                              onDeleted={() => {
+                                void categoryQuery.refetch();
+                              }}
+                            />
+                          </>
                         ) : null}
                       </>
                     ) : undefined
@@ -473,11 +504,6 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'rgba(0,0,0,0.14)',
-    },
-    directorySearch: {
-      backgroundColor: colors.surfaceContainer,
-      borderWidth: 0,
-      borderRadius: 18,
     },
     filterHeading: {
       flexDirection: 'row',

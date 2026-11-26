@@ -24,7 +24,7 @@ const provider: ServiceProvider = {
   serviceTitle: 'سباك',
   description: '',
   phone: '01012345678',
-  address: 'شارع المدارس',
+  address: 'شارع المدرسة',
 
   status: 'approved',
   publicationStatus: 'published',
@@ -54,7 +54,7 @@ it('shares fresh public details through the recipient chooser without selecting 
   const url = open.mock.calls[0][0];
   expect(url).toMatch(/^whatsapp:\/\/send\?text=/);
   expect(url).not.toContain('phone=');
-  expect(decodeURIComponent(url)).toContain('شارع المدارس');
+  expect(decodeURIComponent(url)).toContain('شارع المدرسة');
   expect(mockShow).not.toHaveBeenCalled();
 });
 it('blocks confirmed unavailable services and purges their cached contact details', async () => {

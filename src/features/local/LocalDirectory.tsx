@@ -1,5 +1,7 @@
+import { mapPlacePhoto } from '../provider/firebaseMapping';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useSyncExternalStore, type ReactNode } from 'react';
+import { resolveCategoryIcon } from '../discovery/data/categories';
 import type { ServiceCategory, ServiceProvider } from '../discovery/types';
 import { normalizeContactNumber } from '../discovery/contact';
 import { validateAvailability } from '../availability/validation';
@@ -55,7 +57,15 @@ function cleanProvider(
     Object.keys(validateAvailability(value)).length
   )
     return null;
+  let placePhoto: ServiceProvider['placePhoto'];
+  try {
+    placePhoto = mapPlacePhoto(value.placePhoto);
+  } catch {
+    // Invalid cached image metadata must not hide an otherwise usable service.
+    placePhoto = undefined;
+  }
   return {
+    ...(placePhoto ? { placePhoto } : {}),
     id: value.id,
     name: value.name,
     categoryId: value.categoryId,
@@ -71,8 +81,8 @@ function cleanProvider(
     publicationStatus: 'published',
     dataSource: 'firestore',
     ...(value.serviceMode ? { serviceMode: value.serviceMode } : {}),
-    ...(value.coverageAreas ? { coverageAreas: [...value.coverageAreas] } : {}),
     ...(value.weeklyHours ? { weeklyHours: value.weeklyHours } : {}),
+    ...(value.claimable === true ? { claimable: true } : {}),
     ...(validDate(value.updatedAt) ? { updatedAt: value.updatedAt } : {}),
     ...(validDate(value.lastConfirmedAt)
       ? { lastConfirmedAt: value.lastConfirmedAt }
@@ -97,7 +107,7 @@ function cleanCategory(value: ServiceCategory): ServiceCategory | null {
     id: value.id,
     name: value.name,
     description: value.description,
-    icon: value.icon,
+    icon: resolveCategoryIcon(value.id, value.icon),
     group: value.group,
     keywords: value.keywords
       .filter((word) => typeof word === 'string')

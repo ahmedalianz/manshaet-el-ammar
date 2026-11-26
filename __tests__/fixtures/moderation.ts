@@ -9,6 +9,7 @@ import type {
   MockOperation,
   MockState,
   ProviderListing,
+  ServiceClaim,
   ServiceValues,
 } from '../../src/features/provider/types';
 
@@ -129,7 +130,7 @@ export function initialMockState(): MockState {
         proposedData: {
           ...sample,
           phone: '01100000001',
-          address: 'شارع المدارس، بجوار المسجد الكبير',
+          address: 'شارع المدرسة، بجوار المسجد الكبير',
         },
         createdAt,
       },
@@ -168,6 +169,7 @@ export function initialMockState(): MockState {
         createdAt,
       },
     ],
+    claims: [],
   };
 }
 
@@ -313,8 +315,182 @@ export function applyOperation(
       ],
     };
   }
+  if (operation.type === 'submitClaim') {
+    if (actor.role !== 'provider')
+      throw new Error('طلبات نقل الملكية متاحة لحساب مقدم الخدمة فقط.');
+    const target = state.services.find(
+      (service) => service.id === operation.providerId,
+    );
+    if (
+      !target ||
+      target.publicationStatus !== 'published' ||
+      target.claimable !== true
+    )
+      throw new Error('الخدمة دي مش متاحة لطلب نقل الملكية.');
+    if (target.ownerId === actor.id)
+      throw new Error('الخدمة دي مسجلة باسم حسابك بالفعل.');
+    const name = operation.claimantName.trim();
+    if (!name || name.length > 100)
+      throw new Error('اكتب اسمك الكامل، بحد أقصى ١٠٠ حرف.');
+    const phone = normalizeMobile(operation.claimantPhone);
+    if (!/^01[0125]\d{8}$/.test(phone))
+      throw new Error('اكتب رقم موبايل مصري صحيح.');
+    const claims = state.claims ?? [];
+    const existing = claims.find(
+      (claim) =>
+        claim.providerId === target.id && claim.claimantId === actor.id,
+    );
+    if (existing?.status === 'pending')
+      throw new Error(
+        'بعتّ طلب نقل للخدمة دي قبل كده وهو قيد المراجعة حاليًا.',
+      );
+    const nextClaim: ServiceClaim = {
+      id: `${target.id}_${actor.id}`,
+      providerId: target.id,
+      serviceName: target.name,
+      serviceTitle: target.serviceTitle,
+      claimantId: actor.id,
+      claimantName: name,
+      claimantPhone: phone,
+      note: (operation.note ?? '').trim(),
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+    };
+    return {
+      ...state,
+      claims: existing
+        ? claims.map((item) => (item.id === existing.id ? nextClaim : item))
+        : [...claims, nextClaim],
+    };
+  }
   if (actor.role !== 'admin')
     throw new Error('العملية متاحة للمشرف التجريبي فقط.');
+  if (operation.type === 'adminSave') {
+    const values = cleanValues(operation.values);
+    if (operation.providerId) {
+      const target = state.services.find(
+        (item) => item.id === operation.providerId,
+      );
+      if (!target) throw new Error('الخدمة غير موجودة.');
+      return {
+        ...state,
+        services: state.services.map((item) =>
+          item.id === target.id
+            ? {
+                ...item,
+                ...values,
+                ownerId: target.ownerId,
+                publicationStatus: target.publicationStatus,
+                updatedAt: now,
+              }
+            : item,
+        ),
+        requests: state.requests.map((item) =>
+          item.providerId === target.id && item.status === 'pending'
+            ? {
+                ...item,
+                status: 'rejected',
+                rejectionReason:
+                  'تم تحديث بيانات الخدمة مباشرة بواسطة مشرف الدليل.',
+                reviewedAt: now,
+              }
+            : item,
+        ),
+      };
+    }
+    const providerId = env.id();
+    return {
+      ...state,
+      services: [
+        ...state.services,
+        {
+          ...values,
+          id: providerId,
+          ownerId: actor.id,
+          claimable: true,
+          publicationStatus: 'published',
+          updatedAt: now,
+        },
+      ],
+    };
+  }
+  if (operation.type === 'approveClaim' || operation.type === 'rejectClaim') {
+    const claims = state.claims ?? [];
+    const claim = claims.find((item) => item.id === operation.claimId);
+    if (!claim || claim.status !== 'pending')
+      throw new Error('الطلب اتراجع قبل كده أو مبقاش متاح. حدّث القائمة.');
+    if (operation.type === 'rejectClaim') {
+      const reason = operation.reason.trim();
+      if (!reason) throw new Error('اكتب سبب الرفض.');
+      return {
+        ...state,
+        claims: claims.map((item) =>
+          item.id === claim.id
+            ? {
+                ...item,
+                status: 'rejected',
+                rejectionReason: reason,
+                reviewedBy: actor.id,
+                reviewedAt: now,
+                updatedAt: now,
+              }
+            : item,
+        ),
+      };
+    }
+    const target = state.services.find((item) => item.id === claim.providerId);
+    if (
+      !target ||
+      target.publicationStatus !== 'published' ||
+      target.claimable !== true
+    )
+      throw new Error('الخدمة دي مبقتش متاحة لنقل الملكية.');
+    return {
+      ...state,
+      services: state.services.map((item) =>
+        item.id === target.id
+          ? {
+              ...item,
+              ownerId: claim.claimantId,
+              claimable: false,
+              updatedAt: now,
+            }
+          : item,
+      ),
+      requests: state.requests.map((item) =>
+        item.providerId === target.id && item.status === 'pending'
+          ? {
+              ...item,
+              status: 'rejected',
+              rejectionReason: 'تم نقل ملكية الخدمة لصاحبها.',
+              reviewedAt: now,
+            }
+          : item,
+      ),
+      claims: claims.map((item) =>
+        item.id === claim.id
+          ? {
+              ...item,
+              status: 'approved',
+              reviewedBy: actor.id,
+              reviewedAt: now,
+              updatedAt: now,
+            }
+          : item.providerId === target.id && item.status === 'pending'
+            ? {
+                ...item,
+                status: 'rejected',
+                rejectionReason:
+                  'تم التأكد من ملكية الخدمة ونقلها لصاحبها الفعلي.',
+                reviewedBy: actor.id,
+                reviewedAt: now,
+                updatedAt: now,
+              }
+            : item,
+      ),
+    };
+  }
   if (operation.type === 'unpublish') {
     const service = state.services.find(
       (item) => item.id === operation.providerId,

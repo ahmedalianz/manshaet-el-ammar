@@ -47,17 +47,17 @@ const renderDashboard = () =>
   );
 
 describe('admin dashboard tabs and live counts', () => {
-  it('opens the matching list from each summary card', async () => {
+  it('switches between all dashboard filters via a single unified tab bar without duplicate filter buttons', async () => {
     await renderDashboard();
     for (const label of [
       'الخدمات المنشورة',
       'الأرشيف',
       'البلاغات',
+      'طلبات الملكية',
       'طلبات المراجعة',
     ]) {
-      await fireEvent.press(
-        screen.getByRole('button', { name: `عرض ${label}` }),
-      );
+      expect(screen.queryByRole('button', { name: `عرض ${label}` })).toBeNull();
+      await fireEvent.press(screen.getByRole('tab', { name: label }));
       expect(
         screen.getByRole('tab', { name: label }).props.accessibilityState
           .selected,

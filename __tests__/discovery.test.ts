@@ -83,8 +83,10 @@ describe('empty states', () => {
 describe('sign-in destination allowlist', () => {
   it.each([
     ['add', '/provider/add'],
+    ['deletion', '/info/deletion'],
     ['more', '/(tabs)/more'],
     ['my-services', '/(tabs)/my-services'],
+    ['drafts', '/(tabs)/my-services'],
     ['https://evil.test', '/(tabs)/my-services'],
     [undefined, '/(tabs)/my-services'],
   ])('maps %s safely', (next, expected) =>

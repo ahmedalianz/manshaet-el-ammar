@@ -9,8 +9,8 @@ export const editableFields: (keyof ServiceValues)[] = [
 
   'address',
   'serviceMode',
-  'coverageAreas',
   'weeklyHours',
+  'photoChange',
 ];
 export function changedFields(
   current: ServiceValues,

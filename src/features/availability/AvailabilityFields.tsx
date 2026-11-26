@@ -108,10 +108,6 @@ export function AvailabilityFields({
                   onChange({
                     ...value,
                     serviceMode: mode as Availability['serviceMode'],
-                    ...((mode === 'mobile' || mode === 'both') &&
-                    !value.coverageAreas?.length
-                      ? { coverageAreas: ['all'] }
-                      : {}),
                   })
                 }
                 style={{

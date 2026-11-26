@@ -29,6 +29,11 @@ describe('resident search terms', () => {
     ['طبيب', 'clinics'],
     ['نجار', 'carpentry'],
     ['نجارة', 'carpentry'],
+    ['خدمات تانية', 'other'],
+    ['أخرى', 'other'],
+    ['متنوعة', 'other'],
+    ['other', 'other'],
+    ['تانية', 'other'],
   ])(
     'finds %s by the supported category even without the term in provider copy',
     (query, category) => {

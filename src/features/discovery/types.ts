@@ -18,7 +18,15 @@ export type ServiceCategory = {
 
 export type ProviderStatus = 'approved' | 'pending' | 'rejected';
 
+export type PlacePhoto = {
+  version: string;
+  thumbnailUrl: string;
+  detailUrl: string;
+  width: number;
+  height: number;
+};
 export type ServiceProvider = Availability & {
+  placePhoto?: PlacePhoto;
   updatedAt?: string;
   lastConfirmedAt?: string;
   cachedAt?: string;
@@ -36,4 +44,5 @@ export type ServiceProvider = Availability & {
   longitude?: number;
   status: ProviderStatus;
   publicationStatus?: 'published' | 'unpublished';
+  claimable?: boolean;
 };

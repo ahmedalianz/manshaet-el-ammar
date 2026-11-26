@@ -13,13 +13,13 @@ import { useFeedback } from '../../components/ui/Feedback';
 import { MotionPressable } from '../../components/ui/Motion';
 import { useAppTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { ThemeColors } from '../../theme/colors';
-import { typography } from '../../theme/typography';
+import { fontFamily, typography } from '../../theme/typography';
 import { AvailabilityDetails } from '../availability/AvailabilityDetails';
-import { ProviderAction, useProviderStyles } from './ProviderPage';
+import { ProviderAction } from './ProviderPage';
 import { useProviderState } from './ProviderContext';
 import { fetchProvider } from './firebaseRepository';
 import { db } from '../../lib/firebase/firestore';
-import { confirmationDue } from './confirmation';
+import { serviceConfirmationDue } from './confirmation';
 import type { ProviderListing } from './types';
 import type { ServiceProvider } from '../discovery/types';
 
@@ -29,7 +29,6 @@ export function ConfirmDetailsAction({
   listing: ProviderListing;
 }) {
   const feedback = useFeedback();
-  const providerStyles = useProviderStyles();
   const styles = useThemedStyles(createStyles);
   const { colors } = useAppTheme();
   const { confirmDetails } = useProviderState();
@@ -90,7 +89,7 @@ export function ConfirmDetailsAction({
         },
         {
           icon: 'phone-outline' as const,
-          label: 'رقم الموبايل',
+          label: 'رقم التواصل',
           value: reviewed.phone,
           phone: true,
         },
@@ -109,19 +108,58 @@ export function ConfirmDetailsAction({
     : [];
   return (
     <View style={{ gap: 8 }}>
-      <Text style={providerStyles.notice}>
-        {confirmationDue(listing.lastConfirmedAt)
-          ? 'عدّى وقت على آخر تأكيد. راجع رقمك وبيانات خدمتك وطمّنا إنها لسه صحيحة.'
-          : `آخر تأكيد منك: ${new Date(listing.lastConfirmedAt!).toLocaleDateString('ar-EG')}`}
-      </Text>
-      {confirmationDue(listing.lastConfirmedAt) ? (
-        <ProviderAction
-          title={busy ? 'بنحمّل البيانات…' : 'راجع وأكّد البيانات'}
-          secondary
+      {serviceConfirmationDue(listing) ? (
+        <MotionPressable
+          accessibilityRole="button"
+          accessibilityLabel="راجع وأكّد بيانات خدمتك"
+          accessibilityState={{ disabled: busy, busy }}
           disabled={busy}
           onPress={() => void review()}
-        />
-      ) : null}
+          style={styles.confirmReminder}
+        >
+          <View
+            style={styles.reminderIcon}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            <MaterialCommunityIcons
+              name="calendar-check-outline"
+              size={20}
+              color={colors.primaryDark}
+            />
+          </View>
+          <View style={styles.reminderCopy}>
+            <Text style={styles.reminderTitle}>
+              {busy ? 'بنحمّل البيانات…' : 'تحتاج تأكيد البيانات'}
+            </Text>
+            <Text style={styles.reminderBody}>
+              راجع بيانات خدمتك واتأكد من صحتها.
+            </Text>
+          </View>
+          <View style={styles.reminderChevron}>
+            <MaterialCommunityIcons
+              name="chevron-left"
+              size={20}
+              color={colors.primaryDark}
+              accessibilityElementsHidden
+            />
+          </View>
+        </MotionPressable>
+      ) : (
+        <View style={styles.confirmedMeta}>
+          <MaterialCommunityIcons
+            name="shield-check-outline"
+            size={16}
+            color={colors.muted}
+            accessibilityElementsHidden
+          />
+          <Text style={styles.confirmedMetaText}>
+            {listing.lastConfirmedAt
+              ? `آخر تأكيد منك: ${new Date(listing.lastConfirmedAt).toLocaleDateString('ar-EG')}`
+              : `آخر تحديث منشور: ${new Date(listing.updatedAt!).toLocaleDateString('ar-EG')}`}
+          </Text>
+        </View>
+      )}
       <Modal
         visible={Boolean(reviewed)}
         transparent
@@ -241,6 +279,65 @@ export function ConfirmDetailsAction({
 }
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    confirmReminder: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      minHeight: 68,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceLow,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    reminderIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      backgroundColor: colors.categoryBlue,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    reminderCopy: { flex: 1, minWidth: 0, gap: 2 },
+    reminderTitle: {
+      fontFamily: fontFamily.semibold,
+      fontSize: 15,
+      lineHeight: 24,
+      color: colors.primaryDark,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+    },
+    reminderBody: {
+      ...typography.caption,
+      color: colors.textSecondary,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+    },
+    reminderChevron: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    confirmedMeta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 4,
+      paddingVertical: 2,
+    },
+    confirmedMetaText: {
+      ...typography.caption,
+      flex: 1,
+      color: colors.muted,
+      writingDirection: 'rtl',
+      textAlign: 'auto',
+    },
     backdrop: {
       flex: 1,
       justifyContent: 'flex-end',

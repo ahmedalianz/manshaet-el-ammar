@@ -62,14 +62,14 @@ export function FavoriteButton({
       accessibilityState={{ selected: saved, disabled: !local.hydrated }}
       accessibilityLabel={
         iconOnly
-          ? `${saved ? 'إزالة' : 'حفظ'} ${provider.name} ${saved ? 'من' : 'في'} المفضلة`
+          ? `${saved ? 'شيل' : 'حفظ'} ${provider.name} ${saved ? 'من' : 'في'} المفضلة`
           : saved
-            ? 'إزالة من المفضلة'
+            ? 'شيل من المفضلة'
             : 'حفظ في المفضلة'
       }
       accessibilityHint={
         iconOnly
-          ? (local.storageError ?? 'محفوظاتك على الجهاز، من غير حساب')
+          ? (local.storageError ?? 'المفضلة على جهازك، من غير حساب')
           : undefined
       }
       disabled={!local.hydrated}
@@ -77,6 +77,10 @@ export function FavoriteButton({
         event?.stopPropagation();
         interacted.current = true;
         local.toggleFavorite(provider.id, provider);
+        if (!saved)
+          feedback.show('اتضافت للمفضلة', '', undefined, {
+            tone: 'success',
+          });
       }}
       style={{
         minHeight: 44,
@@ -117,7 +121,7 @@ export function FavoriteButton({
           {local.storageError
             ? 'مش قادرين نحفظ على الجهاز'
             : saved
-              ? 'محفوظ في المفضلة'
+              ? 'في المفضلة'
               : 'حفظ في المفضلة'}
         </Text>
       ) : null}

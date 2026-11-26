@@ -1,7 +1,7 @@
 import { MotionPressable as Pressable } from '../../components/ui/Motion';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, type ComponentProps } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import {
   AdminGuard,
@@ -16,27 +16,42 @@ import {
 } from '../../features/discovery/components/DiscoveryUi';
 import { categories } from '../../features/discovery/data/categories';
 import { normalizeArabic } from '../../features/discovery/search';
-import { useProviderStyles } from '../../features/provider/ProviderPage';
+import {
+  ProviderAction,
+  useProviderStyles,
+} from '../../features/provider/ProviderPage';
 import { useProviderState } from '../../features/provider/ProviderContext';
+import { useAdminClaims } from '../../features/claims/useServiceClaims';
 import type { ThemeColors } from '../../theme/colors';
 import { useAppTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import { typography } from '../../theme/typography';
 import type {
   PublishedService,
+  ServiceClaim,
   ServiceReport,
   ServiceRequest,
 } from '../../features/provider/types';
 
-type AdminTab = 'requests' | 'services' | 'reports' | 'archive';
+type AdminTab = 'requests' | 'claims' | 'services' | 'reports' | 'archive';
 type DashboardRow =
   | { key: string; kind: 'request'; request: ServiceRequest }
+  | { key: string; kind: 'claim'; claim: ServiceClaim }
   | { key: string; kind: 'service'; service: PublishedService }
   | { key: string; kind: 'report'; report: ServiceReport };
-const tabs: { id: AdminTab; label: string; counter: string }[] = [
-  { id: 'requests', label: 'طلبات المراجعة', counter: 'قيد المراجعة' },
-  { id: 'services', label: 'الخدمات المنشورة', counter: 'خدمات منشورة' },
-  { id: 'archive', label: 'الأرشيف', counter: 'غير منشورة' },
-  { id: 'reports', label: 'البلاغات', counter: 'بلاغات مفتوحة' },
+const tabs: {
+  id: AdminTab;
+  label: string;
+  icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+}[] = [
+  { id: 'requests', label: 'طلبات المراجعة', icon: 'clipboard-clock-outline' },
+  { id: 'claims', label: 'طلبات الملكية', icon: 'account-switch-outline' },
+  {
+    id: 'services',
+    label: 'الخدمات المنشورة',
+    icon: 'storefront-check-outline',
+  },
+  { id: 'archive', label: 'الأرشيف', icon: 'archive-outline' },
+  { id: 'reports', label: 'البلاغات', icon: 'flag-outline' },
 ];
 export default function AdminScreen() {
   return (
@@ -50,12 +65,27 @@ function AdminDashboard() {
   const { colors } = useAppTheme();
   const providerStyles = useProviderStyles();
   const adminStyles = useAdminStyles();
-  const { services, reports, pendingRequests, refresh, privateRefreshing } =
-    useProviderState();
+  const {
+    userId,
+    services,
+    reports,
+    pendingRequests,
+    refresh,
+    privateRefreshing,
+    adminBusy,
+    syncClaimableServices,
+  } = useProviderState();
+  const { claims: pendingClaimsList } = useAdminClaims('pending');
   const [activeTab, setActiveTab] = useState<AdminTab>('requests');
   const [query, setQuery] = useState('');
   const [newestFirst, setNewestFirst] = useState(true);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const pending = [...pendingRequests].sort((a, b) =>
+    newestFirst
+      ? b.createdAt.localeCompare(a.createdAt)
+      : a.createdAt.localeCompare(b.createdAt),
+  );
+  const pendingClaims = [...pendingClaimsList].sort((a, b) =>
     newestFirst
       ? b.createdAt.localeCompare(a.createdAt)
       : a.createdAt.localeCompare(b.createdAt),
@@ -63,6 +93,9 @@ function AdminDashboard() {
   const published = services.filter(
     (service) => service.publicationStatus === 'published',
   );
+  const unclaimedAdminIds = published
+    .filter((service) => service.ownerId === userId && !service.claimable)
+    .map((service) => service.id);
   const openReports = reports
     .filter((report) => report.status === 'open')
     .sort((a, b) =>
@@ -81,6 +114,7 @@ function AdminDashboard() {
   );
   const counts: Record<AdminTab, number> = {
     requests: pending.length,
+    claims: pendingClaims.length,
     services: published.length,
     reports: openReports.length,
     archive: archived.length,
@@ -92,17 +126,23 @@ function AdminDashboard() {
           kind: 'request',
           request,
         }))
-      : activeTab === 'services' || activeTab === 'archive'
-        ? matches.map((service) => ({
-            key: service.id,
-            kind: 'service',
-            service,
+      : activeTab === 'claims'
+        ? pendingClaims.map((claim) => ({
+            key: claim.id,
+            kind: 'claim',
+            claim,
           }))
-        : openReports.map((report) => ({
-            key: report.id,
-            kind: 'report',
-            report,
-          }));
+        : activeTab === 'services' || activeTab === 'archive'
+          ? matches.map((service) => ({
+              key: service.id,
+              kind: 'service',
+              service,
+            }))
+          : openReports.map((report) => ({
+              key: report.id,
+              kind: 'report',
+              report,
+            }));
   const renderRow = ({ item }: { item: DashboardRow }) => {
     if (item.kind === 'request') {
       const proposed = item.request.proposedData;
@@ -137,6 +177,13 @@ function AdminDashboard() {
                   : 'تعديل خدمة منشورة'}
             </Text>
           </View>
+          {item.request.photoReviewStatus === 'pending' ? (
+            <Text style={adminStyles.badge}>
+              {item.request.status === 'approved'
+                ? 'الصورة فقط قيد المراجعة'
+                : 'مراجعة صورة المكان'}
+            </Text>
+          ) : null}
           <Text style={styles.serviceTitle}>{proposed.serviceTitle}</Text>
           <Text style={providerStyles.body}>
             {categories.find((category) => category.id === proposed.categoryId)
@@ -148,6 +195,49 @@ function AdminDashboard() {
             </Text>
             <Text style={styles.date}>
               {formatAdminDate(item.request.createdAt)}
+            </Text>
+            <MaterialCommunityIcons
+              name="chevron-left"
+              color={colors.muted}
+              size={22}
+            />
+          </View>
+        </Pressable>
+      );
+    }
+    if (item.kind === 'claim') {
+      return (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`مراجعة طلب نقل ${item.claim.serviceName}`}
+          style={adminStyles.card}
+          onPress={() =>
+            router.push({
+              pathname: '/admin/claim/[id]',
+              params: { id: item.claim.id },
+            })
+          }
+        >
+          <View style={styles.requestHeading}>
+            <Text style={[providerStyles.label, styles.grow]}>
+              {item.claim.serviceName}
+            </Text>
+            <Text style={[adminStyles.badge, styles.updateBadge]}>
+              طلب نقل ملكية
+            </Text>
+          </View>
+          <Text style={styles.serviceTitle}>{item.claim.serviceTitle}</Text>
+          <Text style={providerStyles.body}>
+            مقدم الطلب: {item.claim.claimantName} — {'\u2066'}
+            {item.claim.claimantPhone}
+            {'\u2069'}
+          </Text>
+          <View style={styles.requestFooter}>
+            <Text style={[providerStyles.body, styles.grow]}>
+              راجع الطلب وانقل الملكية
+            </Text>
+            <Text style={styles.date}>
+              {formatAdminDate(item.claim.createdAt)}
             </Text>
             <MaterialCommunityIcons
               name="chevron-left"
@@ -172,6 +262,9 @@ function AdminDashboard() {
           }
         >
           <ServiceSummary values={item.service} />
+          {item.service.claimable ? (
+            <Text style={adminStyles.badge}>متاح لنقل الملكية</Text>
+          ) : null}
           {item.service.unpublishReason ? (
             <Text style={providerStyles.notice}>
               سبب الإخفاء: {item.service.unpublishReason}
@@ -209,59 +302,85 @@ function AdminDashboard() {
       <FlatList
         ListHeaderComponent={
           <View style={styles.top}>
-            <View style={styles.counters}>
-              {tabs.map((tab) => (
-                <Pressable
-                  key={tab.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={`عرض ${tab.label}`}
-                  accessibilityState={{ selected: activeTab === tab.id }}
-                  onPress={() => setActiveTab(tab.id)}
-                  style={[
-                    styles.counter,
-                    {
-                      borderColor:
-                        activeTab === tab.id ? colors.primary : colors.border,
-                      borderWidth: activeTab === tab.id ? 2 : 1,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.count,
-                      tab.id === 'reports' && { color: colors.error },
-                    ]}
-                  >
-                    {counts[tab.id]}
-                  </Text>
-                  <Text style={styles.counterLabel}>{tab.counter}</Text>
-                </Pressable>
-              ))}
-            </View>
+            <ProviderAction
+              title="إضافة خدمة جديدة"
+              onPress={() =>
+                router.push({
+                  pathname: '/provider/add',
+                  params: { from: 'admin' },
+                })
+              }
+            />
             <Text style={styles.demo}>
-              راجع الطلبات وتابع الخدمات والبلاغات. اسحب القائمة لتحديثها.
+              اسحب القائمة لتحديث الطلبات والخدمات والبلاغات.
             </Text>
-            <View accessibilityRole="tablist" style={styles.tabs}>
-              {tabs.map((tab) => (
-                <Pressable
-                  key={tab.id}
-                  accessibilityRole="tab"
-                  accessibilityLabel={tab.label}
-                  accessibilityState={{ selected: activeTab === tab.id }}
-                  onPress={() => setActiveTab(tab.id)}
-                  style={[styles.tab, activeTab === tab.id && styles.activeTab]}
-                >
-                  <Text
+            <View accessibilityRole="tablist" style={styles.filterGroup}>
+              {tabs.map((tab) => {
+                const selected = activeTab === tab.id;
+                const count = counts[tab.id];
+                const alertReport = tab.id === 'reports' && count > 0;
+                return (
+                  <Pressable
+                    key={tab.id}
+                    accessibilityRole="tab"
+                    accessibilityLabel={tab.label}
+                    accessibilityState={{ selected }}
+                    onPress={() => setActiveTab(tab.id)}
                     style={[
-                      styles.tabText,
-                      activeTab === tab.id && styles.activeText,
+                      styles.filterChip,
+                      selected && styles.activeChip,
+                      !selected && alertReport && styles.alertChip,
                     ]}
                   >
-                    {tab.label}
-                  </Text>
-                  <Text style={styles.tabBadge}>{counts[tab.id]}</Text>
-                </Pressable>
-              ))}
+                    <MaterialCommunityIcons
+                      name={tab.icon}
+                      size={18}
+                      color={
+                        selected
+                          ? colors.onPrimary
+                          : alertReport
+                            ? colors.error
+                            : colors.primaryDark
+                      }
+                      accessibilityElementsHidden
+                    />
+                    <Text
+                      style={[
+                        styles.chipLabel,
+                        selected && styles.activeChipLabel,
+                        !selected && alertReport && { color: colors.error },
+                      ]}
+                    >
+                      {tab.label}
+                    </Text>
+                    <View
+                      style={[
+                        styles.chipCountPill,
+                        selected
+                          ? styles.activeCountPill
+                          : alertReport
+                            ? styles.alertCountPill
+                            : count > 0
+                              ? styles.populatedCountPill
+                              : undefined,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.chipCountText,
+                          selected && styles.activeCountText,
+                          !selected && alertReport && { color: colors.error },
+                          !selected &&
+                            !alertReport &&
+                            count > 0 && { color: colors.primaryDark },
+                        ]}
+                      >
+                        {count}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
             {activeTab === 'services' || activeTab === 'archive' ? (
               <SearchInput
@@ -269,6 +388,51 @@ function AdminDashboard() {
                 onChangeText={setQuery}
                 placeholder="ابحث باسم الخدمة أو صاحبها..."
               />
+            ) : null}
+            {activeTab === 'services' &&
+            syncClaimableServices &&
+            (unclaimedAdminIds.length > 0 || syncMessage) ? (
+              <View style={adminStyles.card}>
+                {unclaimedAdminIds.length > 0 ? (
+                  <ProviderAction
+                    secondary
+                    disabled={Boolean(adminBusy)}
+                    title={`تفعيل طلبات نقل الملكية لخدمات الإدارة (${unclaimedAdminIds.length.toLocaleString('ar-EG')})`}
+                    onPress={async () => {
+                      setSyncMessage(null);
+                      try {
+                        const result =
+                          await syncClaimableServices(unclaimedAdminIds);
+                        if (result.failed > 0 && result.lastError) {
+                          setSyncMessage(
+                            `اتفعّلت ${result.updated.toLocaleString('ar-EG')} خدمة وتعذّر تحديث ${result.failed.toLocaleString('ar-EG')}: ${result.lastError}`,
+                          );
+                        } else if (result.updated > 0) {
+                          setSyncMessage(
+                            `تم تفعيل طلبات نقل الملكية لـ ${result.updated.toLocaleString('ar-EG')} خدمة.`,
+                          );
+                        } else {
+                          setSyncMessage('كل خدمات الإدارة متفعّلة بالفعل.');
+                        }
+                      } catch (cause) {
+                        setSyncMessage(
+                          cause instanceof Error
+                            ? cause.message
+                            : 'مش قادرين نفعّل الخدمات دلوقتي. جرّب تاني.',
+                        );
+                      }
+                    }}
+                  />
+                ) : null}
+                {syncMessage ? (
+                  <Text
+                    accessibilityLiveRegion="polite"
+                    style={providerStyles.notice}
+                  >
+                    {syncMessage}
+                  </Text>
+                ) : null}
+              </View>
             ) : null}
             <View style={styles.listToolbar}>
               {activeTab !== 'services' && activeTab !== 'archive' ? (
@@ -297,11 +461,13 @@ function AdminDashboard() {
                 عرض {rows.length.toLocaleString('ar-EG')}{' '}
                 {activeTab === 'requests'
                   ? 'طلبات معلقة'
-                  : activeTab === 'reports'
-                    ? 'بلاغات مفتوحة'
-                    : activeTab === 'archive'
-                      ? 'خدمات في الأرشيف'
-                      : 'خدمات منشورة'}
+                  : activeTab === 'claims'
+                    ? 'طلبات نقل ملكية'
+                    : activeTab === 'reports'
+                      ? 'بلاغات مفتوحة'
+                      : activeTab === 'archive'
+                        ? 'خدمات في الأرشيف'
+                        : 'خدمات منشورة'}
               </Text>
             </View>
           </View>
@@ -321,13 +487,15 @@ function AdminDashboard() {
             title={
               activeTab === 'requests'
                 ? 'مفيش طلبات مستنية المراجعة.'
-                : activeTab === 'reports'
-                  ? 'مفيش بلاغات مفتوحة.'
-                  : query.trim()
-                    ? 'مفيش خدمات مطابقة للبحث.'
-                    : activeTab === 'archive'
-                      ? 'مفيش خدمات في الأرشيف'
-                      : 'لسه مفيش خدمات منشورة'
+                : activeTab === 'claims'
+                  ? 'مفيش طلبات نقل ملكية مستنية المراجعة.'
+                  : activeTab === 'reports'
+                    ? 'مفيش بلاغات مفتوحة.'
+                    : query.trim()
+                      ? 'مفيش خدمات مطابقة للبحث.'
+                      : activeTab === 'archive'
+                        ? 'مفيش خدمات في الأرشيف'
+                        : 'لسه مفيش خدمات منشورة'
             }
             message={
               (activeTab === 'services' || activeTab === 'archive') &&
@@ -401,62 +569,67 @@ const createStyles = (colors: ThemeColors) =>
       writingDirection: 'rtl',
       textAlign: 'auto',
     },
-    counters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    counter: {
-      flexGrow: 1,
-      flexBasis: '45%',
-      minWidth: 0,
-      padding: 12,
-      borderRadius: 16,
-      backgroundColor: colors.surface,
-      minHeight: 88,
-      justifyContent: 'center',
-      alignItems: 'center',
-      gap: 4,
-    },
-    count: { ...typography.screenTitle, color: colors.primaryDark },
-    counterLabel: {
-      ...typography.caption,
-      color: colors.textSecondary,
-      writingDirection: 'rtl',
-      textAlign: 'center',
-    },
     demo: {
       ...typography.caption,
       color: colors.muted,
       writingDirection: 'rtl',
     },
-    tabs: {
+    filterGroup: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 4,
-      backgroundColor: colors.surfaceContainer,
-      borderRadius: 16,
-      padding: 4,
+      gap: 8,
     },
-    tab: {
-      flexGrow: 1,
-      flexBasis: '40%',
-      minHeight: 48,
-      paddingVertical: 10,
-      paddingHorizontal: 4,
-      justifyContent: 'center',
-      borderRadius: 12,
+    filterChip: {
+      minHeight: 44,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 4,
-      flexWrap: 'wrap',
+      gap: 6,
     },
-    activeTab: { backgroundColor: colors.surface },
-    tabText: {
-      ...typography.caption,
-      textAlign: 'center',
+    activeChip: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    alertChip: {
+      borderColor: colors.error,
+    },
+    chipLabel: {
+      ...typography.label,
+      color: colors.textPrimary,
       writingDirection: 'rtl',
+    },
+    activeChipLabel: {
+      color: colors.onPrimary,
+    },
+    chipCountPill: {
+      minWidth: 22,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 10,
+      backgroundColor: colors.surfaceLow,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    activeCountPill: {
+      backgroundColor: colors.surface,
+    },
+    populatedCountPill: {
+      backgroundColor: colors.surfaceContainer,
+    },
+    alertCountPill: {
+      backgroundColor: colors.errorContainer,
+    },
+    chipCountText: {
+      ...typography.caption,
       color: colors.muted,
     },
-    activeText: {
+    activeCountText: {
       color: colors.primaryDark,
-      fontFamily: typography.label.fontFamily,
     },
     grow: { flex: 1, minWidth: 0 },
     requestHeading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -468,13 +641,6 @@ const createStyles = (colors: ThemeColors) =>
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
       paddingTop: 12,
-    },
-    tabBadge: {
-      ...typography.caption,
-      color: colors.primaryDark,
-      backgroundColor: colors.surfaceLow,
-      borderRadius: 8,
-      paddingHorizontal: 6,
     },
     date: {
       ...typography.caption,

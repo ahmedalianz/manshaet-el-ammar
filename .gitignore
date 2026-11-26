@@ -57,3 +57,9 @@ service-account*.json
 
 # Private migration rollback data
 .local-migrations/
+
+# Photo Worker local secrets and build output
+.dev.vars
+.dev.vars.*
+.wrangler/
+!backend/photo-worker/.dev.vars.example

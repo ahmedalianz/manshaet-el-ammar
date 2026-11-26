@@ -8,6 +8,5 @@ export type DayHours = {
 export type WeeklyHours = Partial<Record<DayKey, DayHours>>;
 export type Availability = {
   serviceMode?: ServiceMode;
-  coverageAreas?: string[];
   weeklyHours?: WeeklyHours;
 };

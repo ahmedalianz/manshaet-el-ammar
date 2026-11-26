@@ -31,6 +31,7 @@ import {
 import type {
   ProviderListing,
   MockAccount,
+  ServiceClaim,
   ServiceValues,
   ServiceRequest,
   PublishedService,
@@ -44,7 +45,15 @@ import {
   restoreProvider,
   deleteProvider,
   resolveReport,
+  saveAdminProvider,
 } from './firebaseAdminRepository';
+import { notifyClaimsChanged } from '../claims/useServiceClaims';
+import {
+  reviewServiceClaim,
+  setProviderClaimable,
+  submitServiceClaim,
+  syncAdminClaimableDetailed,
+} from '../claims/claimsRepository';
 import { firebaseMessage } from '../auth/errors';
 
 type State = {
@@ -69,13 +78,15 @@ type State = {
   requests: ServiceRequest[];
   reports: ServiceReport[];
   pendingRequests: ServiceRequest[];
+  claims?: ServiceClaim[];
+  pendingClaims?: ServiceClaim[];
   publicLoading: boolean;
   categoriesLoading: boolean;
   publicError: string | null;
   privateRefreshing: boolean;
   privateLoading: boolean;
   privateError: string | null;
-  refresh: () => void;
+  refresh: () => Promise<void>;
   refreshMyServices: () => Promise<void>;
   signOut: () => Promise<void>;
   submit: (
@@ -85,10 +96,30 @@ type State = {
     consent?: boolean,
     submissionId?: string,
   ) => Promise<string>;
+  saveAdminService: (
+    values: ServiceValues,
+    id?: string,
+    submissionId?: string,
+  ) => Promise<string>;
   allocateSubmissionId: () => string;
   updateAccountName: (name: string) => Promise<void>;
   approveRequest: (id: string) => Promise<void>;
   rejectRequest: (id: string, reason: string) => Promise<void>;
+  submitClaim?: (input: {
+    providerId: string;
+    claimantName: string;
+    claimantPhone: string;
+    note?: string;
+    consent: boolean;
+  }) => Promise<string>;
+  approveClaim?: (id: string) => Promise<void>;
+  rejectClaim?: (id: string, reason: string) => Promise<void>;
+  setServiceClaimable?: (id: string, claimable: boolean) => Promise<void>;
+  syncClaimableServices?: (ids: string[]) => Promise<{
+    updated: number;
+    failed: number;
+    lastError: string | null;
+  }>;
   unpublishService: (id: string, reason: string) => Promise<void>;
   restoreService: (id: string) => Promise<void>;
   deleteService: (id: string) => Promise<void>;
@@ -96,7 +127,7 @@ type State = {
   confirmDetails: (id: string, revision: string) => Promise<void>;
 };
 const Context = createContext<State | null>(null);
-function ownerListings(
+export function ownerListings(
   providers: ProviderListing[],
   requests: ServiceRequest[],
 ): ProviderListing[] {
@@ -110,11 +141,20 @@ function ownerListings(
       .filter((item) => item.providerId === id)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const latest = history.at(-1);
+    const photoReview = latest?.photoReviewStatus
+      ? {
+          photoReviewStatus: latest.photoReviewStatus,
+          photoReviewReason: latest.photoReviewReason,
+          photoCandidateId: latest.photoChange?.candidateId,
+          photoAction: latest.photoChange?.action,
+        }
+      : {};
     const pending = history.find((item) => item.status === 'pending');
     if (published?.publicationStatus === 'unpublished')
       return [
         {
           ...published,
+          ...photoReview,
           ...(latest?.type === 'restore' ? latest.proposedData : {}),
           status: pending
             ? 'pending'
@@ -131,6 +171,7 @@ function ownerListings(
       return [
         {
           ...published,
+          ...photoReview,
           pendingChanges: pending?.proposedData,
           editRejectionReason:
             latest?.status === 'rejected' && latest.type === 'update'
@@ -143,6 +184,7 @@ function ownerListings(
     return [
       {
         ...latest.proposedData,
+        ...photoReview,
         id,
         ownerId: latest.ownerId,
         status: latest.status === 'approved' ? 'approved' : latest.status,
@@ -163,6 +205,8 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
   const [adminBusy, setAdminBusy] = useState(false);
   const adminLock = useRef(false);
   const previous = useRef<string | null>(null);
+  const syncedClaimableIds = useRef<Set<string>>(new Set());
+  const inFlightClaimableIds = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (previous.current !== uid) {
       const prior = previous.current;
@@ -170,6 +214,8 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
         void client.cancelQueries({ queryKey: ['private', prior] });
         client.removeQueries({ queryKey: ['private', prior] });
       }
+      syncedClaimableIds.current.clear();
+      inFlightClaimableIds.current.clear();
       previous.current = uid;
     }
   }, [uid, client]);
@@ -229,6 +275,44 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
       client.removeQueries({ queryKey: ['private', uid, 'moderation'] });
     }
   }, [uid, isAdmin, client]);
+  useEffect(() => {
+    if (!db || !uid || !isAdmin || !adminQuery.data?.services.length) return;
+    const missingClaimable = adminQuery.data.services
+      .filter(
+        (service) =>
+          service.publicationStatus === 'published' &&
+          service.ownerId === uid &&
+          service.claimable === undefined &&
+          !syncedClaimableIds.current.has(service.id) &&
+          !inFlightClaimableIds.current.has(service.id),
+      )
+      .map((service) => service.id);
+    if (!missingClaimable.length) return;
+    for (const id of missingClaimable) inFlightClaimableIds.current.add(id);
+    void syncAdminClaimableDetailed(db, uid, missingClaimable)
+      .then((result) => {
+        for (const id of missingClaimable) {
+          inFlightClaimableIds.current.delete(id);
+        }
+        for (const id of result.updatedIds) {
+          syncedClaimableIds.current.add(id);
+        }
+        if (result.updatedIds.length > 0) {
+          notifyClaimsChanged();
+          void Promise.all([
+            client.invalidateQueries({ queryKey: ['public'] }),
+            client.invalidateQueries({
+              queryKey: ['private', uid, 'moderation'],
+            }),
+          ]);
+        }
+      })
+      .catch(() => {
+        for (const id of missingClaimable) {
+          inFlightClaimableIds.current.delete(id);
+        }
+      });
+  }, [uid, isAdmin, adminQuery.data?.services, client]);
   const requireSession = () => {
     if (!db || !uid || auth.initializing)
       throw new Error('سجّل الدخول قبل إدارة خدماتك.');
@@ -238,6 +322,7 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
   };
   const refreshMyServices = useCallback(async () => {
     if (!uid || auth.initializing) return;
+    notifyClaimsChanged();
     await Promise.all([
       client.invalidateQueries({
         queryKey: ['private', uid, 'providers'],
@@ -249,13 +334,26 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
       }),
     ]);
   }, [uid, auth.initializing, client]);
-  const refresh = () => {
-    void client.invalidateQueries({ queryKey: ['public'] });
-    if (uid) void client.invalidateQueries({ queryKey: ['private', uid] });
+  const refresh = async () => {
+    notifyClaimsChanged();
+    await Promise.all([
+      client.invalidateQueries(
+        { queryKey: ['public'] },
+        { throwOnError: true },
+      ),
+      ...(uid
+        ? [
+            client.invalidateQueries(
+              { queryKey: ['private', uid] },
+              { throwOnError: true },
+            ),
+          ]
+        : []),
+    ]);
   };
-  const moderate = async (
-    operation: (database: NonNullable<typeof db>, uid: string) => Promise<void>,
-  ) => {
+  const runAdminOperation = async <T,>(
+    operation: (database: NonNullable<typeof db>, uid: string) => Promise<T>,
+  ): Promise<T> => {
     const session = requireSession();
     if (!isAdmin) throw new Error('الخطوة دي متاحة لمشرف الدليل بس.');
     if (adminLock.current)
@@ -263,11 +361,12 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
     adminLock.current = true;
     setAdminBusy(true);
     try {
-      await operation(session.database, session.uid);
+      const result = await operation(session.database, session.uid);
       await Promise.all([
         client.invalidateQueries({ queryKey: ['private', session.uid] }),
         client.invalidateQueries({ queryKey: ['public'] }),
       ]);
+      return result;
     } catch (error) {
       throw new Error(firebaseMessage(error));
     } finally {
@@ -275,6 +374,9 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
       setAdminBusy(false);
     }
   };
+  const moderate = (
+    operation: (database: NonNullable<typeof db>, uid: string) => Promise<void>,
+  ) => runAdminOperation(operation);
   const submit: State['submit'] = async (
     values,
     id,
@@ -345,7 +447,11 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
         reports: isAdmin ? (adminQuery.data?.reports ?? []) : [],
         pendingRequests: isAdmin
           ? (adminQuery.data?.requests ?? [])
-          : requests.filter((item) => item.status === 'pending'),
+          : requests.filter(
+              (item) =>
+                item.status === 'pending' ||
+                item.photoReviewStatus === 'pending',
+            ),
         categoriesLoading:
           Boolean(db) && categoryQuery.isPending && !cachedCategories.length,
         publicLoading:
@@ -392,6 +498,10 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
           }
         },
         submit,
+        saveAdminService: (values, id, submissionId) =>
+          runAdminOperation((database, currentUid) =>
+            saveAdminProvider(database, currentUid, values, id, submissionId),
+          ),
         allocateSubmissionId: () =>
           `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 18)}`,
         updateAccountName: async (name) => {
@@ -409,6 +519,57 @@ export function ProviderStateProvider({ children }: { children: ReactNode }) {
           moderate((db, uid) => reviewRequest(db, uid, id, 'approved')),
         rejectRequest: (id, reason) =>
           moderate((db, uid) => reviewRequest(db, uid, id, 'rejected', reason)),
+        submitClaim: async (input) => {
+          try {
+            const session = requireSession();
+            if (isAdmin)
+              throw new Error('حساب المشرف مش بيقدّم طلبات نقل ملكية.');
+            const claimId = await submitServiceClaim(
+              session.database,
+              session.uid,
+              input,
+            );
+            notifyClaimsChanged();
+            await client.invalidateQueries({
+              queryKey: ['private', session.uid],
+            });
+            return claimId;
+          } catch (error) {
+            throw new Error(firebaseMessage(error));
+          }
+        },
+        approveClaim: async (id) => {
+          await moderate((database, reviewerId) =>
+            reviewServiceClaim(database, reviewerId, id, 'approved'),
+          );
+          notifyClaimsChanged();
+        },
+        rejectClaim: async (id, reason) => {
+          await moderate((database, reviewerId) =>
+            reviewServiceClaim(database, reviewerId, id, 'rejected', reason),
+          );
+          notifyClaimsChanged();
+        },
+        setServiceClaimable: async (id, claimable) => {
+          await moderate((database, currentUid) =>
+            setProviderClaimable(database, currentUid, id, claimable),
+          );
+          notifyClaimsChanged();
+        },
+        syncClaimableServices: async (ids) => {
+          const result = await runAdminOperation((database, currentUid) =>
+            syncAdminClaimableDetailed(database, currentUid, ids),
+          );
+          for (const id of result.updatedIds) {
+            syncedClaimableIds.current.add(id);
+          }
+          notifyClaimsChanged();
+          return {
+            updated: result.updatedIds.length,
+            failed: result.failedCount,
+            lastError: result.lastError,
+          };
+        },
         unpublishService: (id, reason) =>
           moderate(async (db, uid) => {
             await unpublishProvider(db, uid, id, reason);

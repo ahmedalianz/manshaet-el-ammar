@@ -147,3 +147,43 @@ it('serializes rapid acknowledgements and reports storage failures without expos
     expect(hook.result.current.persistenceError).toContain('تعذر حفظ'),
   );
 });
+
+it('surfaces independent photo review decisions before and after text moderation without altering non-photo keys', async () => {
+  expect(reviewDecisionKey(approved)).toBe(
+    JSON.stringify(['request', 'approved', '2026-11-11T10:00:00Z']),
+  );
+  const photoApprovedWhileTextPending: ServiceRequest = {
+    ...approved,
+    id: 'photo-first',
+    status: 'pending',
+    reviewedAt: undefined,
+    photoReviewStatus: 'approved',
+    photoReviewedAt: '2026-11-13T10:00:00Z',
+  };
+  const hook = await renderHook(
+    ({ requests }: { requests: ServiceRequest[] }) =>
+      useReviewDecisions('owner', listings, requests),
+    { initialProps: { requests: [photoApprovedWhileTextPending] } },
+  );
+  await waitFor(() =>
+    expect(hook.result.current.unread).toEqual([photoApprovedWhileTextPending]),
+  );
+  await act(() =>
+    hook.result.current.acknowledge(photoApprovedWhileTextPending),
+  );
+  expect(hook.result.current.unread).toEqual([]);
+
+  const photoRejectedAfterTextApproved: ServiceRequest = {
+    ...approved,
+    id: 'text-first',
+    photoReviewStatus: 'rejected',
+    photoReviewReason: 'الصورة غير واضحة',
+    photoReviewedAt: '2026-11-14T10:00:00Z',
+  };
+  await hook.rerender({ requests: [photoRejectedAfterTextApproved] });
+  await waitFor(() =>
+    expect(hook.result.current.unread).toEqual([
+      photoRejectedAfterTextApproved,
+    ]),
+  );
+});

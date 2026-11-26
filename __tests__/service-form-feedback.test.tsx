@@ -84,7 +84,7 @@ describe('unsaved provider form confirmation', () => {
             description: 'وصف',
             phone: '01012345678',
 
-            address: 'شارع المدارس',
+            address: 'شارع المدرسة',
           }}
         />
       </FeedbackProvider>,
@@ -124,7 +124,7 @@ describe('unsaved provider form confirmation', () => {
             description: 'وصف',
             phone: '01012345678',
 
-            address: 'شارع المدارس',
+            address: 'شارع المدرسة',
           }}
         />
       </FeedbackProvider>,
@@ -177,7 +177,7 @@ it('reviews before sending, returns from edits, and requires fresh consent', asy
           serviceTitle: 'صيانة',
           description: '',
           phone: '٠١٠١٢٣٤٥٦٧٨',
-          address: 'شارع المدارس',
+          address: 'شارع المدرسة',
           serviceMode: 'fixed',
         }}
       />
@@ -298,7 +298,7 @@ it('keeps navigation gestures inside the review flow and blocks unapplied hours'
   const repeat = jest.fn();
   await act(() => mockPreventRemove.mock.calls.at(-1)![1]({ repeat }));
   expect(repeat).not.toHaveBeenCalled();
-  expect(screen.getByLabelText('رقم الموبايل *')).toBeTruthy();
+  expect(screen.getByLabelText('رقم التواصل *')).toBeTruthy();
 });
 
 it.each(['rejected', 'unpublished'] as const)(

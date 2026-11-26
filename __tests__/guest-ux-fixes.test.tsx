@@ -128,9 +128,10 @@ describe('guest UX regressions', () => {
       mockDetail = { ...providers[0], description: description as string };
       await render(<ProviderDetails />);
       expect(screen.queryByText('عن الخدمة')).toBeNull();
+      expect(screen.queryByText('بيانات التواصل والعنوان')).toBeNull();
+      expect(screen.getByText(providers[0].address)).toBeTruthy();
       expect(screen.getByText(categories[0].name)).toBeTruthy();
       expect(screen.getByText(providers[0].name)).toBeTruthy();
-      expect(screen.getByText('بيانات التواصل والعنوان')).toBeTruthy();
     },
   );
 
@@ -142,6 +143,8 @@ describe('guest UX regressions', () => {
     await render(<ProviderDetails />);
     expect(screen.getByText('عن الخدمة')).toBeTruthy();
     expect(screen.getByText(description.trim())).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'عن الخدمة' }));
+    expect(screen.queryByText(description.trim())).toBeNull();
     expect(screen.getByText(categories[0].name)).toBeTruthy();
   });
 });
